@@ -29,6 +29,7 @@ Implemented:
 - HTML, JSON, CSV, SQLite, AI activity, and cleanup outputs
 - first-screen whole-app summary via `Big Picture` and `Activity Buckets`
 - large-session controls: `--no-reads`, `--max-events`, `--no-sqlite`
+- fixture-driven tests for normalization and summary logic
 
 Recent Phase 1 fixes:
 
@@ -42,6 +43,7 @@ Recent Phase 1 fixes:
 - full-app recording validated against Codex and Claude sessions
 - full-app report summary layer implemented
 - large-session capture controls implemented
+- test project added and passing against lifecycle / summary fixtures
 
 Current proof point:
 
@@ -68,23 +70,9 @@ These are product polish and fidelity gaps, not viability gaps. The tool is alre
 
 ## Next Up
 
-Immediate next work should stay focused on hardening the now-working collector/report pipeline.
+Immediate next work should stay focused on improving the quality of network interpretation and AI-session presentation.
 
-### 1. Normalization Tests
-
-Goal: harden the lifecycle/report logic that now matters to the product.
-
-Build:
-
-- fixture-driven tests for:
-  - create then modify
-  - create then delete
-  - rename old/new path
-  - snapshot + ETW merge
-  - `.git` suppression
-  - runtime-noise suppression
-
-### 2. Better Network Grouping
+### 1. Better Network Grouping
 
 Goal: move from "endpoints exist" to "this app talked to these services."
 
@@ -94,7 +82,7 @@ Build:
 - cleaner network summary cards
 - better unresolved-IP fallback presentation
 
-### 3. Smarter AI Session Report
+### 2. Smarter AI Session Report
 
 Goal: make Codex/Cursor/VS Code/Claude sessions the strongest demo.
 
@@ -114,7 +102,7 @@ Sensitive paths touched: .env
 Shells spawned: PowerShell
 ```
 
-### 4. Include / Exclude Path Filtering
+### 3. Include / Exclude Path Filtering
 
 Goal: let whole-app mode stay broad without being noisy.
 
@@ -124,7 +112,7 @@ Build:
 - `--exclude <path>`
 - likely multiple-use flags
 
-### 5. Better Risk Observations
+### 4. Better Risk Observations
 
 Goal: make the top of the report feel opinionated.
 

@@ -16,6 +16,7 @@ Working now:
 - full-app summary layer with `Big Picture` and `Activity Buckets`
 - HTML / JSON / CSV / SQLite outputs
 - AI-oriented report sections
+- test project with passing normalization and summary fixtures
 
 Verified against real sessions:
 
@@ -25,20 +26,7 @@ Verified against real sessions:
 
 ## Next Execution Order
 
-### 1. Normalization Tests
-
-Stop collector/report regressions.
-
-Build fixture-driven tests for:
-
-- create then modify
-- create then delete
-- rename old/new path
-- snapshot plus ETW merge
-- `.git` suppression
-- runtime-noise suppression
-
-### 2. Better Network Grouping
+### 1. Better Network Grouping
 
 Build:
 
@@ -46,7 +34,7 @@ Build:
 - cleaner network summary cards
 - prefer domain-style output in report headings
 
-### 3. Smarter AI Session Profiles
+### 2. Smarter AI Session Profiles
 
 Build first-class summaries for:
 
@@ -55,7 +43,7 @@ Build first-class summaries for:
 - Cursor
 - VS Code
 
-### 4. Include / Exclude Path Filters
+### 3. Include / Exclude Path Filters
 
 Build:
 

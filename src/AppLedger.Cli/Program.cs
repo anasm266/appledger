@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Management;
 using System.Net;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 using System.Security;
 using System.Text;
 using System.Text.Json;
@@ -13,6 +14,8 @@ using Microsoft.Diagnostics.Tracing.Parsers;
 using Microsoft.Diagnostics.Tracing.Parsers.Kernel;
 using Microsoft.Diagnostics.Tracing.Session;
 using Microsoft.Win32;
+
+[assembly: InternalsVisibleTo("AppLedger.Tests")]
 
 namespace AppLedger;
 

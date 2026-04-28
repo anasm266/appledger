@@ -28,6 +28,7 @@ Current Phase 1 capabilities:
 - normalize rename targets in regenerated reports and display renames as `old -> new`
 - group `.git` internals and runtime bookkeeping out of the main report tables
 - control large sessions with `--no-reads`, `--max-events <n>`, and `--no-sqlite`
+- cover normalization and summary logic with unit tests
 
 Generated artifacts:
 
@@ -149,6 +150,12 @@ dotnet run --project src\AppLedger.Cli -- snapshot after.json --watch "."
 dotnet run --project src\AppLedger.Cli -- diff before.json after.json
 ```
 
+Run the tests:
+
+```powershell
+dotnet test AppLedger.slnx
+```
+
 ## CLI
 
 ```text
@@ -246,6 +253,7 @@ Recent Phase 1 progress:
 - DNS/hostname enrichment in network output
 - `Big Picture` and `Activity Buckets` summary layer
 - large-session capture controls: `--no-reads`, `--max-events`, `--no-sqlite`
+- test project covering normalization, rename synthesis, merge behavior, and summary generation
 
 ## Roadmap
 

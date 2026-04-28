@@ -905,13 +905,163 @@ internal static class FileEventMerger
             });
         }
 
+        result = SynthesizeRenameTargets(result);
+
         return result
             .Select(file => file with
             {
-                Category = PathClassifier.Classify(file.Path),
-                IsSensitive = PathClassifier.IsSensitive(file.Path)
+                Category = PathClassifier.Classify(file.Kind == FileEventKind.Renamed && !string.IsNullOrWhiteSpace(file.RelatedPath) ? file.RelatedPath : file.Path),
+                IsSensitive = PathClassifier.IsSensitive(file.Path) || (!string.IsNullOrWhiteSpace(file.RelatedPath) && PathClassifier.IsSensitive(file.RelatedPath))
             })
             .ToList();
+    }
+
+    private static List<FileEvent> SynthesizeRenameTargets(List<FileEvent> events)
+    {
+        var result = events.ToList();
+        var consumedCreatePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var rename in result
+            .Where(file => file.Kind == FileEventKind.Renamed)
+            .OrderBy(file => file.ObservedAt)
+            .ToList())
+        {
+            if (!string.IsNullOrWhiteSpace(rename.RelatedPath))
+            {
+                consumedCreatePaths.Add(Normalize(rename.RelatedPath));
+                continue;
+            }
+
+            var sourceDirectory = NormalizeDirectory(rename.Path);
+            var candidates = result
+                .Where(file => file.Kind == FileEventKind.Created)
+                .Where(file => file.Source.Equals("snapshot", StringComparison.OrdinalIgnoreCase)
+                    || file.Source.Equals("normalized", StringComparison.OrdinalIgnoreCase))
+                .Where(file => !consumedCreatePaths.Contains(Normalize(file.Path)))
+                .Where(file => NormalizeDirectory(file.Path).Equals(sourceDirectory, StringComparison.OrdinalIgnoreCase))
+                .Select(file => new { File = file, NameMatch = ShareNameStem(Path.GetFileNameWithoutExtension(rename.Path), Path.GetFileNameWithoutExtension(file.Path)), Score = ScoreRenameTarget(rename, file) })
+                .Where(item => item.Score > 0)
+                .ToList();
+
+            if (candidates.Count == 0)
+            {
+                continue;
+            }
+
+            if (candidates.Any(item => item.NameMatch))
+            {
+                candidates = candidates.Where(item => item.NameMatch).ToList();
+            }
+            else if (candidates.Count != 1)
+            {
+                continue;
+            }
+
+            candidates = candidates
+                .OrderByDescending(item => item.Score)
+                .ThenBy(item => Math.Abs((item.File.ObservedAt - rename.ObservedAt).TotalMilliseconds))
+                .ThenBy(item => item.File.Path, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var best = candidates[0];
+            var secondScore = candidates.Count > 1 ? candidates[1].Score : int.MinValue;
+            if (best.Score == secondScore)
+            {
+                continue;
+            }
+
+            consumedCreatePaths.Add(Normalize(best.File.Path));
+            result.Remove(best.File);
+            result.Remove(rename);
+            result.Add(rename with { RelatedPath = best.File.Path });
+        }
+
+        var renameTargets = result
+            .Where(file => file.Kind == FileEventKind.Renamed && !string.IsNullOrWhiteSpace(file.RelatedPath))
+            .Select(file => Normalize(file.RelatedPath!))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        result = result
+            .Where(file => file.Kind != FileEventKind.Created || !renameTargets.Contains(Normalize(file.Path)))
+            .ToList();
+
+        return result;
+    }
+
+    private static int ScoreRenameTarget(FileEvent rename, FileEvent created)
+    {
+        var score = 0;
+        if (rename.ProcessId is not null && rename.ProcessId == created.ProcessId)
+        {
+            score += 4;
+        }
+
+        var renameExtension = Path.GetExtension(rename.Path);
+        var createdExtension = Path.GetExtension(created.Path);
+        if (!string.IsNullOrWhiteSpace(renameExtension)
+            && renameExtension.Equals(createdExtension, StringComparison.OrdinalIgnoreCase))
+        {
+            score += 2;
+        }
+
+        var renameName = Path.GetFileNameWithoutExtension(rename.Path);
+        var createdName = Path.GetFileNameWithoutExtension(created.Path);
+        if (ShareNameStem(renameName, createdName))
+        {
+            score += 5;
+        }
+
+        if (created.Source.Equals("normalized", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 1;
+        }
+        return score;
+    }
+
+    private static bool ShareNameStem(string left, string right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+        {
+            return false;
+        }
+
+        var leftTokens = NameTokens(left);
+        var rightTokens = NameTokens(right);
+        if (leftTokens.Intersect(rightTokens, StringComparer.OrdinalIgnoreCase).Any(token => token.Length >= 3))
+        {
+            return true;
+        }
+
+        var commonPrefix = CommonPrefixLength(left, right);
+        return commonPrefix >= 5;
+    }
+
+    private static string[] NameTokens(string value)
+    {
+        var separators = new[] { '-', '_', '.', ' ' };
+        return value
+            .Split(separators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(token => token.Trim())
+            .Where(token => token.Length > 0)
+            .ToArray();
+    }
+
+    private static int CommonPrefixLength(string left, string right)
+    {
+        var max = Math.Min(left.Length, right.Length);
+        var count = 0;
+        while (count < max && char.ToUpperInvariant(left[count]) == char.ToUpperInvariant(right[count]))
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    private static string NormalizeDirectory(string path)
+    {
+        var directory = Path.GetDirectoryName(path) ?? path;
+        return Normalize(directory);
     }
 
     private static string Normalize(string path) => Path.GetFullPath(path).TrimEnd('\\');
@@ -1097,6 +1247,8 @@ internal sealed class EtwCollector : IDisposable
     private readonly ConcurrentDictionary<int, byte> _sessionPids = new();
     private readonly ConcurrentDictionary<int, ProcessRecord> _processes = new();
     private readonly ConcurrentQueue<FileEvent> _fileEvents = new();
+    private readonly ConcurrentDictionary<ulong, string> _knownFilePaths = new();
+    private readonly ConcurrentDictionary<ulong, PendingRename> _pendingRenames = new();
     private readonly TraceEventSession? _session;
     private Task? _processingTask;
     private ProcessSampler? _processSampler;
@@ -1184,6 +1336,7 @@ internal sealed class EtwCollector : IDisposable
         {
             _session?.Stop();
             _processingTask?.Wait(TimeSpan.FromSeconds(3));
+            FlushPendingRenames();
         }
         catch (Exception ex) when (ex is ObjectDisposedException or AggregateException or InvalidOperationException)
         {
@@ -1219,12 +1372,68 @@ internal sealed class EtwCollector : IDisposable
             }
         };
 
+        session.Source.Kernel.FileIOName += HandleFileName;
+        session.Source.Kernel.FileIOFileCreate += HandleFileName;
         session.Source.Kernel.FileIOCreate += HandleFileCreate;
         session.Source.Kernel.FileIORead += data => AddFile(FileEventKind.Read, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
         session.Source.Kernel.FileIOWrite += data => AddFile(FileEventKind.Modified, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
         session.Source.Kernel.FileIOFileDelete += data => AddFile(FileEventKind.Deleted, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
         session.Source.Kernel.FileIODelete += data => AddFile(FileEventKind.Deleted, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
-        session.Source.Kernel.FileIORename += data => AddFile(FileEventKind.Renamed, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
+        session.Source.Kernel.FileIORename += HandleFileRename;
+    }
+
+    private void HandleFileName(FileIONameTraceData data)
+    {
+        if (string.IsNullOrWhiteSpace(data.FileName) || data.FileKey == 0)
+        {
+            return;
+        }
+
+        if (!ShouldTrackProcess(data.ProcessID))
+        {
+            return;
+        }
+
+        _knownFilePaths[data.FileKey] = data.FileName;
+
+        if (_pendingRenames.TryGetValue(data.FileKey, out var pending)
+            && !NormalizePath(pending.FromPath).Equals(NormalizePath(data.FileName), StringComparison.OrdinalIgnoreCase))
+        {
+            _pendingRenames.TryRemove(data.FileKey, out _);
+            AddFile(FileEventKind.Renamed, pending.FromPath, pending.ProcessId, pending.ProcessName, data.TimeStamp, data.FileName);
+            _knownFilePaths[data.FileKey] = data.FileName;
+        }
+    }
+
+    private void HandleFileRename(FileIOInfoTraceData data)
+    {
+        if (string.IsNullOrWhiteSpace(data.FileName))
+        {
+            return;
+        }
+
+        if (!ShouldTrackProcess(data.ProcessID))
+        {
+            return;
+        }
+
+        if (data.FileKey != 0
+            && _knownFilePaths.TryGetValue(data.FileKey, out var currentPath)
+            && !NormalizePath(currentPath).Equals(NormalizePath(data.FileName), StringComparison.OrdinalIgnoreCase))
+        {
+            AddFile(FileEventKind.Renamed, currentPath, data.ProcessID, data.ProcessName, data.TimeStamp, data.FileName);
+            _knownFilePaths[data.FileKey] = data.FileName;
+            return;
+        }
+
+        if (data.FileKey != 0)
+        {
+            _pendingRenames[data.FileKey] = new PendingRename(data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
+            _knownFilePaths[data.FileKey] = data.FileName;
+            return;
+        }
+
+        AddFile(FileEventKind.Renamed, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
     }
 
     private void HandleFileCreate(FileIOCreateTraceData data)
@@ -1244,28 +1453,23 @@ internal sealed class EtwCollector : IDisposable
         }
     }
 
-    private void AddFile(FileEventKind kind, string? path, int processId, string? processName, DateTime timestamp)
+    private void AddFile(FileEventKind kind, string? path, int processId, string? processName, DateTime timestamp, string? relatedPath = null)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
             return;
         }
 
-        if (!_watchAll && !PathClassifier.IsUnderAnyWatchRoot(path, _watchRoots))
+        var pathInScope = _watchAll || PathClassifier.IsUnderAnyWatchRoot(path, _watchRoots);
+        var relatedPathInScope = !string.IsNullOrWhiteSpace(relatedPath) && (_watchAll || PathClassifier.IsUnderAnyWatchRoot(relatedPath, _watchRoots));
+        if (!pathInScope && !relatedPathInScope)
         {
             return;
         }
 
-        if (!_sessionPids.ContainsKey(processId))
+        if (!ShouldTrackProcess(processId))
         {
-            if (_processSampler?.ContainsProcess(processId) == true)
-            {
-                _sessionPids[processId] = 0;
-            }
-            else
-            {
-                return;
-            }
+            return;
         }
 
         if (IsNoisyFileEvent(kind, path))
@@ -1273,7 +1477,48 @@ internal sealed class EtwCollector : IDisposable
             return;
         }
 
-        _fileEvents.Enqueue(FileEvent.Live(kind, path, processId, processName) with { ObservedAt = timestamp });
+        _fileEvents.Enqueue(FileEvent.Live(kind, path, processId, processName, relatedPath) with { ObservedAt = timestamp });
+    }
+
+    private bool ShouldTrackProcess(int processId)
+    {
+        if (_sessionPids.ContainsKey(processId))
+        {
+            return true;
+        }
+
+        if (_processSampler?.ContainsProcess(processId) == true)
+        {
+            _sessionPids[processId] = 0;
+            return true;
+        }
+
+        return false;
+    }
+
+    private void FlushPendingRenames()
+    {
+        foreach (var (_, pending) in _pendingRenames.ToArray())
+        {
+            _fileEvents.Enqueue(FileEvent.Live(FileEventKind.Renamed, pending.FromPath, pending.ProcessId, pending.ProcessName) with
+            {
+                ObservedAt = pending.Timestamp
+            });
+        }
+
+        _pendingRenames.Clear();
+    }
+
+    private static string NormalizePath(string path)
+    {
+        try
+        {
+            return Path.GetFullPath(path).TrimEnd('\\');
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return path;
+        }
     }
 
     private static bool IsNoisyFileEvent(FileEventKind kind, string path)
@@ -1293,6 +1538,8 @@ internal sealed class EtwCollector : IDisposable
         return normalized.Contains("\\.git\\", StringComparison.OrdinalIgnoreCase)
             && normalized.EndsWith(".lock", StringComparison.OrdinalIgnoreCase);
     }
+
+    private sealed record PendingRename(string FromPath, int ProcessId, string? ProcessName, DateTime Timestamp);
 }
 
 internal sealed class NetworkSampler
@@ -1321,7 +1568,8 @@ internal sealed class NetworkSampler
                     row.RemoteAddress,
                     row.RemotePort,
                     row.State,
-                    DateTimeOffset.Now));
+                    DateTimeOffset.Now,
+                    null));
             }
         }
     }
@@ -1334,7 +1582,176 @@ internal sealed record NetworkEvent(
     string RemoteAddress,
     int RemotePort,
     string State,
-    DateTimeOffset FirstSeen);
+    DateTimeOffset FirstSeen,
+    string? RemoteHost);
+
+internal static class NetworkResolver
+{
+    private static readonly ConcurrentDictionary<string, string?> Cache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Lazy<Dictionary<string, string>> DnsCacheIndex = new(BuildDnsCacheIndex, true);
+
+    public static List<NetworkEvent> Enrich(IReadOnlyList<NetworkEvent> events)
+    {
+        if (events.Count == 0)
+        {
+            return [];
+        }
+
+        var resolved = events
+            .Select(item => item with
+            {
+                RemoteHost = ResolveHost(item.RemoteAddress)
+            })
+            .ToList();
+
+        return resolved;
+    }
+
+    public static string DisplayHost(NetworkEvent item)
+    {
+        if (!string.IsNullOrWhiteSpace(item.RemoteHost))
+        {
+            return item.RemoteHost;
+        }
+
+        return item.RemoteAddress;
+    }
+
+    private static string? ResolveHost(string remoteAddress)
+    {
+        if (string.IsNullOrWhiteSpace(remoteAddress))
+        {
+            return null;
+        }
+
+        if (!IPAddress.TryParse(remoteAddress, out var ip))
+        {
+            return remoteAddress;
+        }
+
+        if (DnsCacheIndex.Value.TryGetValue(remoteAddress, out var cachedHost))
+        {
+            Cache[remoteAddress] = cachedHost;
+            return cachedHost;
+        }
+
+        if (Cache.TryGetValue(remoteAddress, out var cached))
+        {
+            return cached;
+        }
+
+        try
+        {
+            var lookup = Dns.GetHostEntryAsync(remoteAddress);
+            if (!lookup.Wait(TimeSpan.FromMilliseconds(500)))
+            {
+                Cache[remoteAddress] = null;
+                return null;
+            }
+
+            var entry = lookup.GetAwaiter().GetResult();
+            var host = NormalizeHost(entry.HostName);
+            Cache[remoteAddress] = host;
+            return host;
+        }
+        catch
+        {
+            Cache[remoteAddress] = null;
+            return null;
+        }
+    }
+
+    private static string? NormalizeHost(string? hostName)
+    {
+        if (string.IsNullOrWhiteSpace(hostName))
+        {
+            return null;
+        }
+
+        return hostName.Trim().TrimEnd('.').ToLowerInvariant();
+    }
+
+    private static Dictionary<string, string> BuildDnsCacheIndex()
+    {
+        var index = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                @"root\StandardCimv2",
+                "SELECT Entry, Data, Type FROM MSFT_DNSClientCache");
+
+            foreach (ManagementObject entry in searcher.Get())
+            {
+                var type = Convert.ToInt32(entry["Type"] ?? 0, CultureInfo.InvariantCulture);
+                var recordName = entry["Entry"]?.ToString();
+                var data = entry["Data"]?.ToString();
+
+                if (type == 1 && IPAddress.TryParse(data, out _))
+                {
+                    RememberHost(index, data!, recordName);
+                }
+                else if (type == 12 && TryReversePointerToIpv4(recordName, out var address))
+                {
+                    RememberHost(index, address, data);
+                }
+            }
+        }
+        catch
+        {
+            return index;
+        }
+
+        return index;
+    }
+
+    private static void RememberHost(Dictionary<string, string> index, string address, string? host)
+    {
+        var normalized = NormalizeHost(host);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return;
+        }
+
+        if (!index.TryGetValue(address, out var existing)
+            || ShouldReplaceHost(existing, normalized))
+        {
+            index[address] = normalized;
+        }
+    }
+
+    private static bool ShouldReplaceHost(string existing, string candidate)
+    {
+        var existingLabels = existing.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        var candidateLabels = candidate.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        return candidateLabels.Length < existingLabels.Length
+            || (candidate.EndsWith(".github.com", StringComparison.OrdinalIgnoreCase)
+                && !existing.EndsWith(".github.com", StringComparison.OrdinalIgnoreCase))
+            || (candidate.EndsWith(".openai.com", StringComparison.OrdinalIgnoreCase)
+                && !existing.EndsWith(".openai.com", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool TryReversePointerToIpv4(string? pointer, out string address)
+    {
+        address = string.Empty;
+        if (string.IsNullOrWhiteSpace(pointer)
+            || !pointer.EndsWith(".in-addr.arpa", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var trimmed = pointer[..^".in-addr.arpa".Length];
+        var parts = trimmed.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length != 4)
+        {
+            return false;
+        }
+
+        Array.Reverse(parts);
+        address = string.Join(".", parts);
+        return IPAddress.TryParse(address, out _);
+    }
+}
 
 internal static class TcpTable
 {
@@ -1952,8 +2369,9 @@ internal sealed record SessionReport(
         IReadOnlyList<RegistryEvent> registryEvents)
     {
         var normalizedFileEvents = FileEventMerger.NormalizeForSession(fileEvents);
+        var normalizedNetworkEvents = NetworkResolver.Enrich(networkEvents);
         var topFolders = BuildFolderImpact(normalizedFileEvents);
-        var findings = Analyzer.Find(normalizedFileEvents, processes, networkEvents, registryEvents, topFolders);
+        var findings = Analyzer.Find(normalizedFileEvents, processes, normalizedNetworkEvents, registryEvents, topFolders);
         var aiActivity = AiCodingAnalyzer.Build(watchRoots, normalizedFileEvents, processes);
         var summary = new SessionSummary(
             normalizedFileEvents.Count(e => e.Kind == FileEventKind.Read),
@@ -1964,7 +2382,7 @@ internal sealed record SessionReport(
             normalizedFileEvents.Where(e => e.Kind != FileEventKind.Deleted).Sum(e => Math.Max(0, e.SizeDelta)),
             processes.Count,
             processes.Count(p => !string.IsNullOrWhiteSpace(p.CommandLine)),
-            networkEvents.Count,
+            normalizedNetworkEvents.Count,
             registryEvents.Count,
             findings.Count(f => f.Severity == "high" || f.Severity == "medium"));
 
@@ -1978,7 +2396,7 @@ internal sealed record SessionReport(
             summary,
             normalizedFileEvents,
             processes,
-            networkEvents,
+            normalizedNetworkEvents,
             registryEvents,
             findings,
             topFolders,
@@ -1989,8 +2407,9 @@ internal sealed record SessionReport(
     public static SessionReport RefreshDerivedData(SessionReport session)
     {
         var normalizedFileEvents = FileEventMerger.NormalizeForSession(session.FileEvents);
+        var normalizedNetworkEvents = NetworkResolver.Enrich(session.NetworkEvents);
         var topFolders = BuildFolderImpact(normalizedFileEvents);
-        var findings = Analyzer.Find(normalizedFileEvents, session.Processes, session.NetworkEvents, session.RegistryEvents, topFolders);
+        var findings = Analyzer.Find(normalizedFileEvents, session.Processes, normalizedNetworkEvents, session.RegistryEvents, topFolders);
         var aiActivity = AiCodingAnalyzer.Build(session.WatchRoots, normalizedFileEvents, session.Processes);
         var summary = new SessionSummary(
             normalizedFileEvents.Count(e => e.Kind == FileEventKind.Read),
@@ -2001,7 +2420,7 @@ internal sealed record SessionReport(
             normalizedFileEvents.Where(e => e.Kind != FileEventKind.Deleted).Sum(e => Math.Max(0, e.SizeDelta)),
             session.Processes.Count,
             session.Processes.Count(p => !string.IsNullOrWhiteSpace(p.CommandLine)),
-            session.NetworkEvents.Count,
+            normalizedNetworkEvents.Count,
             session.RegistryEvents.Count,
             findings.Count(f => f.Severity is "high" or "medium"));
 
@@ -2009,6 +2428,7 @@ internal sealed record SessionReport(
         {
             Summary = summary,
             FileEvents = normalizedFileEvents,
+            NetworkEvents = normalizedNetworkEvents,
             Findings = findings,
             TopFolders = topFolders,
             AiActivity = aiActivity
@@ -2019,7 +2439,7 @@ internal sealed record SessionReport(
     {
         return events
             .Where(e => e.Kind is FileEventKind.Created or FileEventKind.Modified or FileEventKind.Renamed)
-            .GroupBy(e => Path.GetDirectoryName(e.Path) ?? e.Path, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(e => Path.GetDirectoryName(e.Kind == FileEventKind.Renamed && !string.IsNullOrWhiteSpace(e.RelatedPath) ? e.RelatedPath : e.Path) ?? e.Path, StringComparer.OrdinalIgnoreCase)
             .Select(group => new FolderImpact(
                 group.Key,
                 group.Count(),
@@ -2060,7 +2480,7 @@ internal sealed record AiCodingActivity(
 
 internal sealed record ProjectChangeSummary(int Created, int Modified, int Deleted, int Renamed, int TotalChanged);
 
-internal sealed record ProjectFileChange(FileEventKind Kind, string Path, string RelativePath, string Category, string Source, DateTimeOffset ObservedAt);
+internal sealed record ProjectFileChange(FileEventKind Kind, string Path, string RelativePath, string? RelatedPath, string? RelatedRelativePath, string Category, string Source, DateTimeOffset ObservedAt);
 
 internal sealed record CommandSummary(int Total, int PackageInstalls, int GitCommands, int TestCommands, int ShellCommands, int ScriptCommands);
 
@@ -2173,14 +2593,16 @@ internal static class AiCodingAnalyzer
     {
         var changedProjectFiles = files
             .Where(file => file.Kind is FileEventKind.Created or FileEventKind.Modified or FileEventKind.Deleted or FileEventKind.Renamed)
-            .Where(file => IsProjectFile(file.Path, watchRoots))
-            .GroupBy(file => $"{file.Kind}|{Normalize(file.Path)}", StringComparer.OrdinalIgnoreCase)
+            .Where(file => IsProjectFile(file.Path, watchRoots) || (!string.IsNullOrWhiteSpace(file.RelatedPath) && IsProjectFile(file.RelatedPath, watchRoots)))
+            .GroupBy(file => $"{file.Kind}|{Normalize(file.Path)}|{NormalizeMaybe(file.RelatedPath)}", StringComparer.OrdinalIgnoreCase)
             .Select(group => group.OrderByDescending(file => SourceRank(file.Source)).ThenByDescending(file => file.ObservedAt).First())
             .OrderBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
             .Select(file => new ProjectFileChange(
                 file.Kind,
                 file.Path,
                 RelativeToWatchRoot(file.Path, watchRoots),
+                file.RelatedPath,
+                file.RelatedPath is null ? null : RelativeToWatchRoot(file.RelatedPath, watchRoots),
                 file.Category,
                 file.Source,
                 file.ObservedAt))
@@ -2191,7 +2613,7 @@ internal static class AiCodingAnalyzer
             changedProjectFiles.Count(file => file.Kind == FileEventKind.Modified),
             changedProjectFiles.Count(file => file.Kind == FileEventKind.Deleted),
             changedProjectFiles.Count(file => file.Kind == FileEventKind.Renamed),
-            changedProjectFiles.Select(file => Normalize(file.Path)).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+            changedProjectFiles.Select(file => Normalize(file.RelatedPath ?? file.Path)).Distinct(StringComparer.OrdinalIgnoreCase).Count());
 
         var rawDeveloperCommands = processes
             .Where(process => !string.IsNullOrWhiteSpace(process.CommandLine))
@@ -2463,6 +2885,8 @@ internal static class AiCodingAnalyzer
 
     private static string Normalize(string path) => Path.GetFullPath(path).TrimEnd('\\');
 
+    private static string NormalizeMaybe(string? path) => string.IsNullOrWhiteSpace(path) ? "" : Normalize(path);
+
     private static string RelativeToWatchRoot(string path, IReadOnlyList<string> roots)
     {
         foreach (var root in roots)
@@ -2527,7 +2951,7 @@ internal static class SessionStore
             CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE processes (process_id INTEGER, parent_process_id INTEGER, name TEXT, executable_path TEXT, command_line TEXT, first_seen TEXT, last_seen TEXT);
             CREATE TABLE file_events (kind TEXT, path TEXT, category TEXT, source TEXT, observed_at TEXT, process_id INTEGER, process_name TEXT, size_delta INTEGER, is_sensitive INTEGER, related_path TEXT);
-            CREATE TABLE network_events (process_id INTEGER, local_address TEXT, local_port INTEGER, remote_address TEXT, remote_port INTEGER, state TEXT, first_seen TEXT);
+            CREATE TABLE network_events (process_id INTEGER, local_address TEXT, local_port INTEGER, remote_address TEXT, remote_port INTEGER, state TEXT, first_seen TEXT, remote_host TEXT);
             CREATE TABLE registry_events (kind TEXT, key TEXT, before_value TEXT, after_value TEXT);
             CREATE TABLE findings (severity TEXT, title TEXT, detail TEXT);
             """);
@@ -2571,7 +2995,7 @@ internal static class SessionStore
 
         foreach (var item in session.NetworkEvents)
         {
-            Insert(connection, transaction, "INSERT INTO network_events VALUES ($pid, $local, $lport, $remote, $rport, $state, $first)", new()
+            Insert(connection, transaction, "INSERT INTO network_events VALUES ($pid, $local, $lport, $remote, $rport, $state, $first, $host)", new()
             {
                 ["$pid"] = item.ProcessId,
                 ["$local"] = item.LocalAddress,
@@ -2579,7 +3003,8 @@ internal static class SessionStore
                 ["$remote"] = item.RemoteAddress,
                 ["$rport"] = item.RemotePort,
                 ["$state"] = item.State,
-                ["$first"] = item.FirstSeen.ToString("O", CultureInfo.InvariantCulture)
+                ["$first"] = item.FirstSeen.ToString("O", CultureInfo.InvariantCulture),
+                ["$host"] = item.RemoteHost
             });
         }
 
@@ -2660,7 +3085,7 @@ internal static class HtmlReport
         var appName = WebUtility.HtmlEncode(Path.GetFileName(session.App));
         var rows = string.Join(Environment.NewLine, VisibleFileEvents(session.FileEvents).Select(RenderFileRow));
         var processes = string.Join(Environment.NewLine, session.Processes.Select(p => $"<tr><td>{p.ProcessId}</td><td>{Esc(p.Name)}</td><td>{Esc(p.CommandLine ?? "")}</td></tr>"));
-        var network = string.Join(Environment.NewLine, session.NetworkEvents.Take(200).Select(n => $"<tr><td>{n.ProcessId}</td><td>{Esc(n.RemoteAddress)}:{n.RemotePort}</td><td>{Esc(n.State)}</td></tr>"));
+        var network = string.Join(Environment.NewLine, session.NetworkEvents.Take(200).Select(RenderNetworkRow));
         var findings = string.Join(Environment.NewLine, session.Findings.Select(f => $"<li class=\"{Esc(f.Severity)}\"><strong>{Esc(f.Severity.ToUpperInvariant())}</strong> {Esc(f.Title)}<br><span>{Esc(f.Detail)}</span></li>"));
         var folders = string.Join(Environment.NewLine, session.TopFolders.Where(f => !IsGitInternalPath(f.Path) && !PathClassifier.IsSystemRuntimeNoise(f.Path)).Select(f => $"<tr><td>{Esc(f.Path)}</td><td>{Esc(f.Category)}</td><td>{f.FileCount:N0}</td><td>{Format.Bytes(f.BytesAdded)}</td></tr>"));
         var projectFiles = string.Join(Environment.NewLine, ai.ChangedProjectFiles.Select(RenderProjectFileRow));
@@ -2818,7 +3243,7 @@ internal static class HtmlReport
 
             <section>
               <h2>Network</h2>
-              <div class="panel"><table><thead><tr><th>PID</th><th>Remote</th><th>State</th></tr></thead><tbody>{{network}}</tbody></table></div>
+              <div class="panel"><table><thead><tr><th>PID</th><th>Remote Host</th><th>Remote</th><th>State</th></tr></thead><tbody>{{network}}</tbody></table></div>
             </section>
 
             <p class="muted">Phase 1 uses ETW file/process events when elevated, live process/network sampling, and before/after file snapshots as fallback. Packet contents are not collected.</p>
@@ -2829,10 +3254,10 @@ internal static class HtmlReport
     }
 
     private static string RenderFileRow(FileEvent file) =>
-        $"<tr><td>{Esc(file.Kind.ToString())}</td><td>{Esc(file.Source)}</td><td>{Esc(file.ProcessId?.ToString(CultureInfo.InvariantCulture) ?? "")}</td><td>{Esc(file.Category)}</td><td>{Format.Bytes(file.SizeDelta)}</td><td><code>{Esc(file.Path)}</code></td></tr>";
+        $"<tr><td>{Esc(file.Kind.ToString())}</td><td>{Esc(file.Source)}</td><td>{Esc(file.ProcessId?.ToString(CultureInfo.InvariantCulture) ?? "")}</td><td>{Esc(file.Category)}</td><td>{Format.Bytes(file.SizeDelta)}</td><td><code>{Esc(RenderFilePath(file))}</code></td></tr>";
 
     private static string RenderProjectFileRow(ProjectFileChange file) =>
-        $"<tr><td>{Esc(file.Kind.ToString())}</td><td>{Esc(file.Source)}</td><td>{Esc(file.Category)}</td><td><code>{Esc(file.RelativePath)}</code></td></tr>";
+        $"<tr><td>{Esc(file.Kind.ToString())}</td><td>{Esc(file.Source)}</td><td>{Esc(file.Category)}</td><td><code>{Esc(RenderProjectPath(file))}</code></td></tr>";
 
     private static string RenderCommandRow(CommandActivity command) =>
         $"<tr><td><span class=\"tag\">{Esc(command.Kind)}</span></td><td>{command.Occurrences:N0}</td><td>{command.ProcessId}</td><td>{Esc(command.ProcessName)}</td><td><code>{Esc(command.CommandLine)}</code></td></tr>";
@@ -2845,6 +3270,9 @@ internal static class HtmlReport
 
     private static string RenderTimelineRow(ProcessTimelineItem item) =>
         $"<tr><td>{Esc(item.FirstSeen.ToString("T", CultureInfo.InvariantCulture))}</td><td>{item.ProcessId}</td><td>{item.ParentProcessId}</td><td>{Esc(item.Name)}</td><td>{item.DurationSeconds:0.0}s</td><td><code>{Esc(item.CommandLine ?? "")}</code></td></tr>";
+
+    private static string RenderNetworkRow(NetworkEvent item) =>
+        $"<tr><td>{item.ProcessId}</td><td>{Esc(NetworkResolver.DisplayHost(item))}</td><td>{Esc(item.RemoteAddress)}:{item.RemotePort}</td><td>{Esc(item.State)}</td></tr>";
 
     private static IEnumerable<FileEvent> VisibleFileEvents(IReadOnlyList<FileEvent> events)
     {
@@ -2987,6 +3415,16 @@ internal static class HtmlReport
                 : $"all live file paths + snapshots under {string.Join("; ", session.WatchRoots)}")
             : string.Join("; ", session.WatchRoots);
 
+    private static string RenderFilePath(FileEvent file) =>
+        file.Kind == FileEventKind.Renamed && !string.IsNullOrWhiteSpace(file.RelatedPath)
+            ? $"{file.Path} -> {file.RelatedPath}"
+            : file.Path;
+
+    private static string RenderProjectPath(ProjectFileChange file) =>
+        file.Kind == FileEventKind.Renamed && !string.IsNullOrWhiteSpace(file.RelatedRelativePath)
+            ? $"{file.RelativePath} -> {file.RelatedRelativePath}"
+            : file.RelativePath;
+
     private static string NormalizeVisiblePath(string path)
     {
         try
@@ -3010,7 +3448,7 @@ internal static class CsvReport
     public static string RenderFiles(IReadOnlyList<FileEvent> events)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("kind,source,observed_at,process_id,process_name,category,size_before,size_after,size_delta,is_sensitive,path");
+        builder.AppendLine("kind,source,observed_at,process_id,process_name,category,size_before,size_after,size_delta,is_sensitive,path,related_path");
         foreach (var item in events)
         {
             builder.AppendLine(string.Join(",", [
@@ -3024,7 +3462,8 @@ internal static class CsvReport
                 Csv(item.SizeAfter?.ToString(CultureInfo.InvariantCulture) ?? ""),
                 Csv(item.SizeDelta.ToString(CultureInfo.InvariantCulture)),
                 Csv(item.IsSensitive.ToString(CultureInfo.InvariantCulture)),
-                Csv(item.Path)
+                Csv(item.Path),
+                Csv(item.RelatedPath ?? "")
             ]));
         }
 

@@ -15,6 +15,7 @@ Current Phase 1 capabilities:
 - attach to an already-running app with `attach`
 - apply capture presets with `--profile ai-code`
 - discover easy app aliases with `apps`
+- list running apps as attachable process groups with `apps --running`
 - search running processes with `ps`
 - record whole-app live file activity with `--watch-all`
 - capture live file and process events with ETW when run elevated
@@ -133,6 +134,7 @@ Find an app by alias or search:
 ```powershell
 dotnet run --project src\AppLedger.Cli -- apps code
 dotnet run --project src\AppLedger.Cli -- apps cursor
+dotnet run --project src\AppLedger.Cli -- apps --running codex
 ```
 
 For day-to-day testing, prefer the published binary:
@@ -151,6 +153,7 @@ Attach to an app that is already running:
 
 ```powershell
 dotnet run --project src\AppLedger.Cli -- ps codex
+dotnet run --project src\AppLedger.Cli -- apps --running codex
 
 .\artifacts\publish-test\appledger.exe record codex --watch .
 ```
@@ -193,6 +196,7 @@ dotnet test AppLedger.slnx
 
 ```text
 appledger apps [search]
+appledger apps --running [search]
 appledger ps [search]
 appledger record <app|process search|pid> [--profile ai-code] [--watch <path>] [--out <dir>] [--timeout <seconds>]
 appledger run <app name|alias|exe> [--args "<arguments>"] [--profile <name>] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
@@ -206,6 +210,7 @@ Useful examples:
 
 ```powershell
 appledger record codex --watch .
+appledger apps --running codex
 appledger attach codex --profile ai-code
 
 dotnet run --project src\AppLedger.Cli -- run "C:\Windows\System32\cmd.exe" `
@@ -226,6 +231,7 @@ Example workflow:
 
 ```powershell
 dotnet run --project src\AppLedger.Cli -- ps codex
+dotnet run --project src\AppLedger.Cli -- apps --running codex
 ```
 
 2. Attach to the root PID from an elevated terminal:
@@ -235,6 +241,8 @@ dotnet run --project src\AppLedger.Cli -- ps codex
 ```
 
 `record` prefers an already-running process and falls back to launching an app. When several matching processes exist, AppLedger picks the root of the matching process tree so commands like `record codex --watch .` include child agent/helper processes. Its default profile is `ai-code`, which enables whole-app live capture, disables high-volume file reads, caps live file events at `50,000`, and snapshots the current directory for project diffs.
+
+`apps --running <search>` is the friendlier process picker. It groups matching processes under the app root, shows child-process counts, and prints a ready-to-run `record` command so users do not need to hunt through Electron helper PIDs.
 
 3. Use the app normally, then open `report.html`.
 
@@ -276,6 +284,7 @@ This repo is in the credible CLI MVP stage.
 Recent Phase 1 progress:
 
 - `attach` for already-running apps
+- `apps --running` process-group picker for already-running apps
 - AI coding report sections
 - ETW attach-mode process-tree sync
 - delete and rename attribution working in elevated mode

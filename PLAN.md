@@ -9,8 +9,10 @@ Working now:
 - launched-app recording
 - attach to running apps
 - friendly `record` command for the default flow
+- `apps --running` grouped picker for already-running apps
 - `--profile ai-code` preset for AI coding sessions
 - process-name recording resolves to the root matching process tree
+- process-name recording deprioritizes AppLedger/dotnet command-line self matches
 - whole-app live mode with `--watch-all`
 - large-session controls with `--no-reads`, `--max-events`, and `--no-sqlite`
 - watched-root snapshot diff
@@ -49,6 +51,7 @@ The generic entry point is now:
 
 ```powershell
 appledger record codex --watch .
+appledger apps --running codex
 appledger attach codex --profile ai-code
 ```
 

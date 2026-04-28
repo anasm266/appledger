@@ -345,6 +345,11 @@ internal static class Program
 
     private static int Apps(string[] args)
     {
+        if (Cli.HasFlag(args, "--running"))
+        {
+            return RunningApps(args);
+        }
+
         var query = args.FirstOrDefault(arg => !arg.StartsWith("--", StringComparison.Ordinal));
         var apps = AppCatalog.Find(query)
             .Take(80)
@@ -361,6 +366,33 @@ internal static class Program
         foreach (var app in apps)
         {
             Console.WriteLine($"{app.Name,-34} {app.Path}");
+        }
+
+        return 0;
+    }
+
+    private static int RunningApps(string[] args)
+    {
+        var query = args.FirstOrDefault(arg => !arg.StartsWith("--", StringComparison.Ordinal));
+        var groups = ProcessCatalog.FindRunningApps(query)
+            .Take(80)
+            .ToList();
+
+        if (groups.Count == 0)
+        {
+            Console.WriteLine(string.IsNullOrWhiteSpace(query)
+                ? "No running apps found."
+                : $"No running apps found for '{query}'.");
+            return 0;
+        }
+
+        Console.WriteLine("Running apps AppLedger can attach to:");
+        Console.WriteLine();
+        foreach (var group in groups)
+        {
+            Console.WriteLine($"{group.Root.ProcessId,7} {group.Root.Name,-24} processes={group.ProcessCount,-3} children={group.ChildProcessCount,-3} match={group.MatchReason}");
+            Console.WriteLine($"        {group.Root.ExecutablePath ?? group.Root.CommandLine}");
+            Console.WriteLine($"        record: appledger record {group.Root.ProcessId} --watch .");
         }
 
         return 0;
@@ -503,6 +535,7 @@ internal static class Program
 
         Usage:
           appledger apps [search]
+          appledger apps --running [search]
           appledger ps [search]
           appledger record <app|process search|pid> [--profile ai-code] [--watch <path>] [--out <dir>] [--timeout <seconds>]
           appledger run <app name|alias|exe> [--args "<arguments>"] [--profile <name>] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
@@ -513,6 +546,7 @@ internal static class Program
 
         Examples:
           appledger apps code
+          appledger apps --running codex
           appledger record codex --watch .
           appledger attach codex --profile ai-code
           appledger run code --watch "C:\Users\Anas\Projects\demo-app"

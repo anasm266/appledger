@@ -15,6 +15,7 @@ Current state: credible CLI MVP.
 Implemented:
 
 - `apps` to discover recordable apps
+- `apps --running` to pick already-running apps without hunting PIDs
 - `ps` to search running processes
 - `record` as the friendly default command that attaches when possible and launches otherwise
 - `run` to launch and record an app
@@ -31,6 +32,7 @@ Implemented:
 - source split out of the original single-file implementation into CLI, collection, filesystem, analysis, model, output, registry, and report modules
 - friendly `record` command and `ai-code` capture profile added
 - process-name recording now prefers the root of a matching process tree instead of an arbitrary child process
+- running-app selection now groups Electron/helper processes under the best app root and deprioritizes AppLedger's own command line
 - startup `Run` / `RunOnce` registry monitoring
 - HTML, JSON, CSV, SQLite, AI activity, and cleanup outputs
 - first-screen whole-app summary via `Big Picture` and `Activity Buckets`
@@ -58,6 +60,7 @@ Recent Phase 1 fixes:
 - reports distinguish disabled file reads from observed zero file reads
 - process identity fields added across JSON, CSV, SQLite, and HTML report output
 - attribution quality summary added to reports
+- running app picker added for friendlier `record codex --watch .` style workflows
 
 Current proof point:
 

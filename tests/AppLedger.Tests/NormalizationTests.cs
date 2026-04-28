@@ -132,6 +132,39 @@ public sealed class NormalizationTests
     }
 
     [Fact]
+    public void ProcessSampler_DoesNotAdoptChildWhenParentPidWasReused()
+    {
+        var sampler = new ProcessSampler(400, @"C:\Program Files\Codex\Codex.exe", "");
+        var root = new ProcessRecord(400, 10, "Codex.exe", @"C:\Program Files\Codex\Codex.exe", "Codex.exe", At(1), At(1), At(2));
+        var oldHelper = new ProcessRecord(35636, 400, "codex-helper.exe", @"C:\Program Files\Codex\helper.exe", "helper", At(2), At(2), At(3));
+        var reusedParent = new ProcessRecord(35636, 999, "Discord.exe", @"C:\Users\Anas\AppData\Local\Discord\Discord.exe", "Discord.exe", At(100), At(100), At(101));
+        var unrelatedChild = new ProcessRecord(41744, 35636, "Discord.exe", @"C:\Users\Anas\AppData\Local\Discord\Discord.exe", "Discord.exe --type=renderer", At(101), At(101), At(102));
+
+        sampler.SampleFrom([root, oldHelper]);
+        sampler.SampleFrom([root, reusedParent, unrelatedChild]);
+
+        Assert.Contains(400, sampler.SessionProcessIds);
+        Assert.DoesNotContain(35636, sampler.SessionProcessIds);
+        Assert.DoesNotContain(41744, sampler.SessionProcessIds);
+        Assert.DoesNotContain(sampler.Processes.Values, process => process.ProcessId == 41744);
+    }
+
+    [Fact]
+    public void ProcessSampler_AdoptsLegitimateDescendantsFromSnapshot()
+    {
+        var sampler = new ProcessSampler(400, @"C:\Program Files\Codex\Codex.exe", "");
+        var root = new ProcessRecord(400, 10, "Codex.exe", @"C:\Program Files\Codex\Codex.exe", "Codex.exe", At(1), At(1), At(2));
+        var child = new ProcessRecord(200, 400, "codex.exe", @"C:\Program Files\Codex\resources\codex.exe", "codex", At(2), At(2), At(3));
+        var grandchild = new ProcessRecord(300, 200, "node_repl.exe", @"C:\Users\Anas\AppData\Local\OpenAI\Codex\bin\node_repl.exe", "node_repl", At(3), At(3), At(4));
+
+        sampler.SampleFrom([root, child, grandchild]);
+
+        Assert.Contains(400, sampler.SessionProcessIds);
+        Assert.Contains(200, sampler.SessionProcessIds);
+        Assert.Contains(300, sampler.SessionProcessIds);
+    }
+
+    [Fact]
     public void NormalizeForSession_PromotesSnapshotCreateWithLiveModify()
     {
         var path = @"C:\Users\Anas\Documents\demo\created.txt";

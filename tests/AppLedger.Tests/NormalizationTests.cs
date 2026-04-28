@@ -265,6 +265,43 @@ public sealed class NormalizationTests
         Assert.Contains("Big Picture", html, StringComparison.Ordinal);
         Assert.Contains("Activity Buckets", html, StringComparison.Ordinal);
         Assert.Contains("Mostly temp churn", html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("known bytes changed", html, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void HtmlReport_LabelsWatchedRootChangesAndUnknownLiveBytes()
+    {
+        var watchRoot = @"C:\Users\Anas\Documents\repo";
+        var file = Live(FileEventKind.Modified, Path.Combine(watchRoot, "scratch.tmp"), observedAt: At(62), processId: 10, processName: "codex.exe");
+        var files = FileEventMerger.NormalizeForSession([file]);
+        var ai = AiCodingAnalyzer.Build([watchRoot], files, []);
+        var overview = SessionActivityAnalyzer.Build([watchRoot], true, files, [], ai, []);
+
+        var session = new SessionReport(
+            App: @"C:\Program Files\App\App.exe",
+            Arguments: "",
+            StartedAt: At(62),
+            EndedAt: At(63),
+            WatchRoots: [watchRoot],
+            WatchAll: true,
+            Summary: new SessionSummary(0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0),
+            FileEvents: files,
+            Processes: [new ProcessRecord(10, 0, "codex.exe", @"C:\Program Files\App\App.exe", "\"app.exe\"", At(62), At(62), At(63))],
+            NetworkEvents: [],
+            RegistryEvents: [],
+            Findings: [],
+            TopFolders: [],
+            AiActivity: ai,
+            SnapshotErrors: [],
+            ActivityOverview: overview);
+
+        var html = HtmlReport.Render(session);
+
+        Assert.Contains("Watched Root Changes", html, StringComparison.Ordinal);
+        Assert.Contains("watched-root paths changed", html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Unknown", html, StringComparison.Ordinal);
+        Assert.Contains("Live ETW file events often do not include file-size deltas", html, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("project files changed", html, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

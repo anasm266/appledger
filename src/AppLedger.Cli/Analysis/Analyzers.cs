@@ -449,9 +449,9 @@ internal static class SessionActivityAnalyzer
 
         var workspaceBucket = BuildFileBucket(
             "workspace",
-            "Project / User Files",
+            "Watched Root / User Files",
             watchRoots.Count > 0
-                ? "Writes under watched roots and user-facing folders."
+                ? "Writes under watched roots and user-facing folders; not all are source/project files."
                 : "Writes under documents, desktop, and downloads.",
             writes.Where(file => IsWorkspaceFile(file, watchRoots)));
         AddBucket(buckets, workspaceBucket);
@@ -582,7 +582,7 @@ internal static class SessionActivityAnalyzer
 
         if (ai.ProjectChanges.TotalChanged > 0)
         {
-            highlights.Add($"Changed {ai.ProjectChanges.TotalChanged:N0} project files.");
+            highlights.Add($"Changed {ai.ProjectChanges.TotalChanged:N0} watched-root path(s).");
         }
 
         if (ai.Commands.GitCommands > 0)
@@ -631,7 +631,7 @@ internal static class SessionActivityAnalyzer
 
         if (ai.ProjectChanges.TotalChanged > 0)
         {
-            parts.Add($"changed {ai.ProjectChanges.TotalChanged:N0} project files");
+            parts.Add($"changed {ai.ProjectChanges.TotalChanged:N0} watched-root path(s)");
         }
 
         if (ai.Commands.GitCommands > 0)

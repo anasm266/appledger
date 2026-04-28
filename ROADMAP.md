@@ -42,6 +42,8 @@ Implemented:
 - HTML, JSON, CSV, SQLite, AI activity, and cleanup outputs
 - first-screen whole-app summary via `Big Picture` and `Activity Buckets`
 - capture settings displayed in reports so disabled categories are clear
+- watched-root changes are labeled separately from source/project intent
+- byte totals are labeled as known bytes because live ETW events often lack size deltas
 - process identity snapshots attached to file and network events for attribution
 - attribution confidence and reason attached to file/network events
 - large-session controls: `--no-reads`, `--max-events`, `--no-sqlite`
@@ -70,6 +72,7 @@ Recent Phase 1 fixes:
 - running app picker added for friendlier `record codex --watch .` style workflows
 - app-specific AI profiles added on top of the generic `ai-code` defaults
 - automatic report opening added with `--no-open` escape hatch
+- report wording tightened for watched-root changes and known-byte totals
 
 Current proof point:
 
@@ -107,7 +110,7 @@ Goal: make Codex/Cursor/VS Code/Claude sessions the strongest demo.
 Build:
 
 - tune Codex/Claude/Cursor/VS Code filter presets from real reports
-- better grouping of project files vs cache/temp/internal repo files
+- better grouping of source/project files vs watched-root temp files, cache/temp, and internal repo files
 - command grouping by high-level action
 - improved sensitive path reporting
 - cleaner process summary / process tree presentation
@@ -115,7 +118,7 @@ Build:
 Success looks like:
 
 ```txt
-Changed project files: 6
+Watched-root paths changed: 6
 Commands run: 9
 Sensitive paths touched: .env
 Shells spawned: PowerShell
@@ -148,7 +151,7 @@ Success looks like the first screen answering:
 
 ```txt
 Big picture:
-- touched 8 project files
+- touched 8 watched-root paths
 - read .env
 - spawned PowerShell
 - ran 6 git commands

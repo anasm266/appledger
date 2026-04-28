@@ -1681,6 +1681,11 @@ internal static class NetworkResolver
         return item.RemoteAddress;
     }
 
+    public static string DisplayHostLabel(NetworkEvent item) =>
+        !string.IsNullOrWhiteSpace(item.RemoteHost)
+            ? item.RemoteHost
+            : $"{item.RemoteAddress} (unresolved)";
+
     private static string? ResolveHost(string remoteAddress)
     {
         if (string.IsNullOrWhiteSpace(remoteAddress))
@@ -2417,7 +2422,8 @@ internal sealed record SessionReport(
     IReadOnlyList<FolderImpact> TopFolders,
     AiCodingActivity? AiActivity,
     IReadOnlyList<string> SnapshotErrors,
-    SessionActivityOverview? ActivityOverview = null)
+    SessionActivityOverview? ActivityOverview = null,
+    SessionNetworkOverview? NetworkOverview = null)
 {
     public static SessionReport Build(
         string app,
@@ -2439,6 +2445,7 @@ internal sealed record SessionReport(
         var findings = Analyzer.Find(normalizedFileEvents, processes, normalizedNetworkEvents, registryEvents, topFolders);
         var aiActivity = AiCodingAnalyzer.Build(watchRoots, normalizedFileEvents, processes);
         var activityOverview = SessionActivityAnalyzer.Build(watchRoots, watchAll, normalizedFileEvents, normalizedNetworkEvents, aiActivity, findings);
+        var networkOverview = NetworkSummaryAnalyzer.Build(normalizedNetworkEvents, processes);
         var summary = new SessionSummary(
             normalizedFileEvents.Count(e => e.Kind == FileEventKind.Read),
             normalizedFileEvents.Count(e => e.Kind == FileEventKind.Created),
@@ -2468,7 +2475,8 @@ internal sealed record SessionReport(
             topFolders,
             aiActivity,
             before.Errors.Concat(after.Errors).Distinct().Take(200).ToList(),
-            activityOverview);
+            activityOverview,
+            networkOverview);
     }
 
     public static SessionReport RefreshDerivedData(SessionReport session)
@@ -2479,6 +2487,7 @@ internal sealed record SessionReport(
         var findings = Analyzer.Find(normalizedFileEvents, session.Processes, normalizedNetworkEvents, session.RegistryEvents, topFolders);
         var aiActivity = AiCodingAnalyzer.Build(session.WatchRoots, normalizedFileEvents, session.Processes);
         var activityOverview = SessionActivityAnalyzer.Build(session.WatchRoots, session.WatchAll, normalizedFileEvents, normalizedNetworkEvents, aiActivity, findings);
+        var networkOverview = NetworkSummaryAnalyzer.Build(normalizedNetworkEvents, session.Processes);
         var summary = new SessionSummary(
             normalizedFileEvents.Count(e => e.Kind == FileEventKind.Read),
             normalizedFileEvents.Count(e => e.Kind == FileEventKind.Created),
@@ -2500,7 +2509,8 @@ internal sealed record SessionReport(
             Findings = findings,
             TopFolders = topFolders,
             AiActivity = aiActivity,
-            ActivityOverview = activityOverview
+            ActivityOverview = activityOverview,
+            NetworkOverview = networkOverview
         };
     }
 
@@ -2538,6 +2548,25 @@ internal sealed record SessionActivityOverview(
     string Headline,
     IReadOnlyList<string> Highlights,
     IReadOnlyList<ActivityBucketSummary> Buckets);
+
+internal sealed record SessionNetworkOverview(
+    IReadOnlyList<NetworkDestinationSummary> Destinations,
+    IReadOnlyList<NetworkProcessSummary> Processes);
+
+internal sealed record NetworkDestinationSummary(
+    string HostLabel,
+    string DisplayAddress,
+    int ConnectionCount,
+    int ProcessCount,
+    IReadOnlyList<string> Processes,
+    IReadOnlyList<int> Ports,
+    IReadOnlyList<string> Addresses);
+
+internal sealed record NetworkProcessSummary(
+    string ProcessName,
+    int ConnectionCount,
+    int DestinationCount,
+    IReadOnlyList<string> Destinations);
 
 internal sealed record ActivityBucketSummary(
     string Key,
@@ -3315,6 +3344,93 @@ internal static class SessionActivityAnalyzer
     }
 }
 
+internal static class NetworkSummaryAnalyzer
+{
+    public static SessionNetworkOverview Build(
+        IReadOnlyList<NetworkEvent> networkEvents,
+        IReadOnlyList<ProcessRecord> processes)
+    {
+        if (networkEvents.Count == 0)
+        {
+            return new SessionNetworkOverview([], []);
+        }
+
+        var processLookup = processes
+            .GroupBy(process => process.ProcessId)
+            .ToDictionary(group => group.Key, group => group.OrderByDescending(item => item.LastSeen).First(), EqualityComparer<int>.Default);
+
+        var destinations = networkEvents
+            .GroupBy(item => DestinationKey(item), StringComparer.OrdinalIgnoreCase)
+            .Select(group =>
+            {
+                var items = group.OrderBy(item => item.FirstSeen).ToList();
+                var first = items[0];
+                var hostLabel = NetworkResolver.DisplayHostLabel(first);
+                var ports = items.Select(item => item.RemotePort).Distinct().OrderBy(port => port).ToList();
+                var addresses = items.Select(item => item.RemoteAddress).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToList();
+                var processNames = items
+                    .Select(item => ResolveProcessName(item.ProcessId, processLookup))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                return new NetworkDestinationSummary(
+                    hostLabel,
+                    first.RemoteAddress,
+                    items.Count,
+                    processNames.Count,
+                    processNames,
+                    ports,
+                    addresses);
+            })
+            .OrderByDescending(item => item.ConnectionCount)
+            .ThenByDescending(item => item.ProcessCount)
+            .ThenBy(item => item.HostLabel, StringComparer.OrdinalIgnoreCase)
+            .Take(25)
+            .ToList();
+
+        var processSummaries = networkEvents
+            .GroupBy(item => ResolveProcessName(item.ProcessId, processLookup), StringComparer.OrdinalIgnoreCase)
+            .Select(group =>
+            {
+                var items = group.ToList();
+                var destinations = items
+                    .Select(NetworkResolver.DisplayHostLabel)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                    .Take(6)
+                    .ToList();
+
+                return new NetworkProcessSummary(
+                    group.Key,
+                    items.Count,
+                    items.Select(DestinationKey).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                    destinations);
+            })
+            .OrderByDescending(item => item.ConnectionCount)
+            .ThenBy(item => item.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .Take(20)
+            .ToList();
+
+        return new SessionNetworkOverview(destinations, processSummaries);
+    }
+
+    private static string DestinationKey(NetworkEvent item) =>
+        string.IsNullOrWhiteSpace(item.RemoteHost)
+            ? item.RemoteAddress
+            : item.RemoteHost;
+
+    private static string ResolveProcessName(int processId, IReadOnlyDictionary<int, ProcessRecord> processes)
+    {
+        if (processes.TryGetValue(processId, out var process))
+        {
+            return process.Name;
+        }
+
+        return $"PID {processId}";
+    }
+}
+
 internal static class SessionOutputs
 {
     public static async Task<IReadOnlyList<string>> WriteAsync(SessionReport session, string outputDirectory, JsonSerializerOptions jsonOptions)
@@ -3490,6 +3606,7 @@ internal static class HtmlReport
         var ai = AiCodingAnalyzer.Build(session.WatchRoots, session.FileEvents, session.Processes);
         var appName = WebUtility.HtmlEncode(Path.GetFileName(session.App));
         var activityOverview = session.ActivityOverview ?? SessionActivityAnalyzer.Build(session.WatchRoots, session.WatchAll, session.FileEvents, session.NetworkEvents, ai, session.Findings);
+        var networkOverview = session.NetworkOverview ?? NetworkSummaryAnalyzer.Build(session.NetworkEvents, session.Processes);
         var rows = string.Join(Environment.NewLine, VisibleFileEvents(session.FileEvents).Select(RenderFileRow));
         var processes = string.Join(Environment.NewLine, session.Processes.Select(p => $"<tr><td>{p.ProcessId}</td><td>{Esc(p.Name)}</td><td>{Esc(p.CommandLine ?? "")}</td></tr>"));
         var network = string.Join(Environment.NewLine, session.NetworkEvents.Take(200).Select(RenderNetworkRow));
@@ -3506,6 +3623,8 @@ internal static class HtmlReport
         var runtimeNoiseExamples = string.Join(Environment.NewLine, runtimeNoise.Examples.Select(example => $"<li><code>{Esc(example)}</code></li>"));
         var activityHighlights = string.Join(Environment.NewLine, activityOverview.Highlights.Select(highlight => $"<li>{Esc(highlight)}</li>"));
         var activityBuckets = string.Join(Environment.NewLine, activityOverview.Buckets.Select(RenderActivityBucket));
+        var networkDestinations = string.Join(Environment.NewLine, networkOverview.Destinations.Select(RenderNetworkDestinationRow));
+        var networkProcesses = string.Join(Environment.NewLine, networkOverview.Processes.Select(RenderNetworkProcessRow));
 
         return $$"""
         <!doctype html>
@@ -3664,6 +3783,21 @@ internal static class HtmlReport
             </section>
 
             <section>
+              <h2>Network Summary</h2>
+              <div class="grid">
+                <div class="metric"><strong>{{networkOverview.Destinations.Count:N0}}</strong><span>destination groups</span></div>
+                <div class="metric"><strong>{{networkOverview.Processes.Count:N0}}</strong><span>network-active processes</span></div>
+              </div>
+              {{(networkOverview.Destinations.Count == 0
+                  ? "<p class=\"muted\">No grouped network summary was derived for this session.</p>"
+                  : $"""
+              <div class="panel"><table><thead><tr><th>Destination</th><th>Address</th><th>Connections</th><th>Processes</th><th>Ports</th></tr></thead><tbody>{networkDestinations}</tbody></table></div>
+              <div style="height:12px"></div>
+              <div class="panel"><table><thead><tr><th>Process</th><th>Connections</th><th>Destinations</th><th>Examples</th></tr></thead><tbody>{networkProcesses}</tbody></table></div>
+              """)}}
+            </section>
+
+            <section>
               <h2>Network</h2>
               <div class="panel"><table><thead><tr><th>PID</th><th>Remote Host</th><th>Remote</th><th>State</th></tr></thead><tbody>{{network}}</tbody></table></div>
             </section>
@@ -3694,7 +3828,25 @@ internal static class HtmlReport
         $"<tr><td>{Esc(item.FirstSeen.ToString("T", CultureInfo.InvariantCulture))}</td><td>{item.ProcessId}</td><td>{item.ParentProcessId}</td><td>{Esc(item.Name)}</td><td>{item.DurationSeconds:0.0}s</td><td><code>{Esc(item.CommandLine ?? "")}</code></td></tr>";
 
     private static string RenderNetworkRow(NetworkEvent item) =>
-        $"<tr><td>{item.ProcessId}</td><td>{Esc(NetworkResolver.DisplayHost(item))}</td><td>{Esc(item.RemoteAddress)}:{item.RemotePort}</td><td>{Esc(item.State)}</td></tr>";
+        $"<tr><td>{item.ProcessId}</td><td>{Esc(NetworkResolver.DisplayHostLabel(item))}</td><td>{Esc(item.RemoteAddress)}:{item.RemotePort}</td><td>{Esc(item.State)}</td></tr>";
+
+    private static string RenderNetworkDestinationRow(NetworkDestinationSummary item)
+    {
+        var processes = item.Processes.Count == 0
+            ? "<span class=\"muted\">None</span>"
+            : string.Join(", ", item.Processes.Select(Esc));
+        var ports = string.Join(", ", item.Ports.Select(port => port.ToString(CultureInfo.InvariantCulture)));
+        var addresses = string.Join(", ", item.Addresses);
+        return $"<tr><td><strong>{Esc(item.HostLabel)}</strong><br><span class=\"muted\">{processes}</span></td><td><code>{Esc(addresses)}</code></td><td>{item.ConnectionCount:N0}</td><td>{item.ProcessCount:N0}</td><td>{Esc(ports)}</td></tr>";
+    }
+
+    private static string RenderNetworkProcessRow(NetworkProcessSummary item)
+    {
+        var examples = item.Destinations.Count == 0
+            ? "<span class=\"muted\">None</span>"
+            : string.Join("<br>", item.Destinations.Select(destination => $"<code>{Esc(destination)}</code>"));
+        return $"<tr><td>{Esc(item.ProcessName)}</td><td>{item.ConnectionCount:N0}</td><td>{item.DestinationCount:N0}</td><td>{examples}</td></tr>";
+    }
 
     private static string RenderActivityBucket(ActivityBucketSummary bucket)
     {

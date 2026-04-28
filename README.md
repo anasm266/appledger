@@ -19,6 +19,7 @@ Current Phase 1 capabilities:
 - fall back to before/after watched-folder snapshots when ETW is unavailable
 - sample IPv4 TCP endpoints by process ID
 - enrich network endpoints with cached DNS / reverse lookup hostnames when possible
+- group network activity by destination and process
 - capture command lines from the observed process tree
 - detect common startup `Run` and `RunOnce` registry changes
 - summarize whole-app sessions with a top-level "Big Picture" and activity buckets
@@ -212,6 +213,7 @@ What the report can now surface for AI sessions:
 - sensitive file access such as `.env`
 - rename and delete activity
 - outbound endpoints with hostname enrichment when available
+- grouped network destinations and network-active processes
 - grouped process activity
 - whole-app temp/cache churn vs project changes
 - first-screen session summary via `Big Picture` and `Activity Buckets`
@@ -254,6 +256,7 @@ Recent Phase 1 progress:
 - `Big Picture` and `Activity Buckets` summary layer
 - large-session capture controls: `--no-reads`, `--max-events`, `--no-sqlite`
 - test project covering normalization, rename synthesis, merge behavior, and summary generation
+- grouped network destination/process summaries
 
 ## Roadmap
 

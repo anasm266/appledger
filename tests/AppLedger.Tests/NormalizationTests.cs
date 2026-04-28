@@ -40,6 +40,26 @@ public sealed class NormalizationTests
     }
 
     [Fact]
+    public void ProcessCatalog_SelectBestRoot_IgnoresAppLedgerCommandLineMatches()
+    {
+        var root = new ProcessRecord(400, 10, "Codex.exe", @"C:\Program Files\Codex\Codex.exe", "Codex.exe", At(1), At(1), At(2));
+        var child = new ProcessRecord(100, 400, "Codex.exe", @"C:\Program Files\Codex\Codex.exe", "Codex.exe --type=renderer", At(2), At(2), At(3));
+        var appLedger = new ProcessRecord(50, 1, "appledger.exe", @"C:\repo\src\AppLedger.Cli\bin\Debug\net8.0-windows\appledger.exe", "appledger record codex --watch .", At(5), At(5), At(6));
+        var dotnet = new ProcessRecord(51, 1, "dotnet.exe", @"C:\Program Files\dotnet\dotnet.exe", "dotnet run --project src\\AppLedger.Cli -- record codex", At(5), At(5), At(6));
+        var all = new[] { root, child, appLedger, dotnet };
+        var matches = all.Where(process =>
+            process.Name.Contains("codex", StringComparison.OrdinalIgnoreCase)
+            || process.ExecutablePath?.Contains("codex", StringComparison.OrdinalIgnoreCase) == true
+            || process.CommandLine?.Contains("codex", StringComparison.OrdinalIgnoreCase) == true)
+            .ToArray();
+
+        var selected = ProcessCatalog.SelectBestRoot("codex", all, matches);
+
+        Assert.NotNull(selected);
+        Assert.Equal(root.ProcessId, selected.ProcessId);
+    }
+
+    [Fact]
     public void NormalizeForSession_PromotesSnapshotCreateWithLiveModify()
     {
         var path = @"C:\Users\Anas\Documents\demo\created.txt";

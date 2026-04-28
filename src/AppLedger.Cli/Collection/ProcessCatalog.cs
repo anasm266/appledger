@@ -9,13 +9,17 @@ internal static class ProcessCatalog
             return Find(null).FirstOrDefault(process => process.ProcessId == pid) ?? TryReadByPid(pid);
         }
 
-        return SelectBestRoot(query, Find(query).ToList());
+        var processes = ReadProcessRecords();
+        var matches = processes
+            .Where(process => Matches(process, query))
+            .ToList();
+
+        return SelectBestRoot(query, processes, matches);
     }
 
     public static IEnumerable<ProcessRecord> Find(string? query)
     {
-        var processes = WmiProcess.ReadAll()
-            .Select(process => process.ToRecord())
+        var processes = ReadProcessRecords()
             .OrderBy(process => Score(process, query))
             .ThenBy(process => process.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(process => process.ProcessId)
@@ -23,14 +27,22 @@ internal static class ProcessCatalog
 
         if (!string.IsNullOrWhiteSpace(query))
         {
-            processes = processes.Where(process =>
-                process.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
-                || process.ExecutablePath?.Contains(query, StringComparison.OrdinalIgnoreCase) == true
-                || process.CommandLine?.Contains(query, StringComparison.OrdinalIgnoreCase) == true
-                || process.ProcessId.ToString(CultureInfo.InvariantCulture).Equals(query, StringComparison.OrdinalIgnoreCase));
+            processes = processes.Where(process => Matches(process, query));
         }
 
         return processes;
+    }
+
+    public static IReadOnlyList<RunningAppGroup> FindRunningApps(string? query)
+    {
+        var processes = ReadProcessRecords();
+        var groups = BuildRunningAppGroups(query, processes);
+        return groups
+            .OrderBy(group => Score(group.Root, query))
+            .ThenByDescending(group => group.ProcessCount)
+            .ThenBy(group => group.Root.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(group => group.Root.ProcessId)
+            .ToList();
     }
 
     private static int Score(ProcessRecord process, string? query)
@@ -45,26 +57,140 @@ internal static class ProcessCatalog
         if (Path.GetFileNameWithoutExtension(process.Name).Equals(query, StringComparison.OrdinalIgnoreCase)) return 2;
         if (process.ExecutablePath?.EndsWith(query + ".exe", StringComparison.OrdinalIgnoreCase) == true) return 3;
         if (process.Name.StartsWith(query, StringComparison.OrdinalIgnoreCase)) return 4;
-        return 5;
+        if (process.ExecutablePath?.Contains(query, StringComparison.OrdinalIgnoreCase) == true) return 5;
+        if (IsAppLedgerSelfReference(process)) return 9;
+        if (process.CommandLine?.Contains(query, StringComparison.OrdinalIgnoreCase) == true) return 8;
+        return 10;
     }
 
     internal static ProcessRecord? SelectBestRoot(string query, IReadOnlyList<ProcessRecord> matches)
+        => SelectBestRoot(query, matches, matches);
+
+    internal static ProcessRecord? SelectBestRoot(string query, IReadOnlyList<ProcessRecord> allProcesses, IReadOnlyList<ProcessRecord> matches)
     {
         if (matches.Count == 0)
         {
             return null;
         }
 
-        var matchedPids = matches
-            .Select(process => process.ProcessId)
-            .ToHashSet();
+        var groups = BuildRunningAppGroups(query, allProcesses, matches);
+        if (groups.Count > 0)
+        {
+            return groups
+                .OrderBy(group => Score(group.Root, query))
+                .ThenByDescending(group => group.ProcessCount)
+                .ThenByDescending(group => group.MatchingProcessCount)
+                .ThenBy(group => group.Root.ProcessId)
+                .First()
+                .Root;
+        }
 
         return matches
-            .OrderBy(process => matchedPids.Contains(process.ParentProcessId) ? 1 : 0)
-            .ThenBy(process => Score(process, query))
-            .ThenByDescending(process => CountDescendants(process.ProcessId, matches))
+            .OrderBy(process => Score(process, query))
+            .ThenByDescending(process => CountDescendants(process.ProcessId, allProcesses))
             .ThenBy(process => process.ProcessId)
             .FirstOrDefault();
+    }
+
+    private static IReadOnlyList<RunningAppGroup> BuildRunningAppGroups(string? query, IReadOnlyList<ProcessRecord> processes)
+    {
+        var byPid = processes.ToDictionary(process => process.ProcessId);
+        var matches = string.IsNullOrWhiteSpace(query)
+            ? processes.Where(process => IsLikelyUserAppRoot(process, byPid)).ToList()
+            : processes.Where(process => Matches(process, query)).ToList();
+
+        return BuildRunningAppGroups(query, processes, matches);
+    }
+
+    private static IReadOnlyList<RunningAppGroup> BuildRunningAppGroups(
+        string? query,
+        IReadOnlyList<ProcessRecord> processes,
+        IReadOnlyList<ProcessRecord> matches)
+    {
+        if (processes.Count == 0 || matches.Count == 0)
+        {
+            return [];
+        }
+
+        var byPid = processes.ToDictionary(process => process.ProcessId);
+        var childrenByParent = processes
+            .GroupBy(process => process.ParentProcessId)
+            .ToDictionary(group => group.Key, group => group.ToList());
+        var matchingPids = matches
+            .Select(process => process.ProcessId)
+            .ToHashSet();
+        var groups = new Dictionary<int, RunningAppGroupBuilder>();
+
+        foreach (var match in matches)
+        {
+            var root = string.IsNullOrWhiteSpace(query)
+                ? match
+                : FindBestMatchingAncestor(match, query, byPid);
+
+            if (!groups.TryGetValue(root.ProcessId, out var builder))
+            {
+                builder = new RunningAppGroupBuilder(root);
+                groups[root.ProcessId] = builder;
+            }
+
+            builder.MatchingProcessCount++;
+        }
+
+        foreach (var builder in groups.Values)
+        {
+            var tree = CollectTree(builder.Root.ProcessId, childrenByParent);
+            builder.ProcessCount = tree.Count + 1;
+            builder.ChildProcessCount = tree.Count;
+            builder.HasMatchedDescendant = tree.Any(process => process.ProcessId != builder.Root.ProcessId && matchingPids.Contains(process.ProcessId));
+        }
+
+        return groups.Values
+            .Select(builder => builder.ToGroup(query))
+            .ToList();
+    }
+
+    private static ProcessRecord FindBestMatchingAncestor(ProcessRecord process, string query, IReadOnlyDictionary<int, ProcessRecord> byPid)
+    {
+        var best = process;
+        var current = process;
+        var seen = new HashSet<int> { process.ProcessId };
+
+        while (byPid.TryGetValue(current.ParentProcessId, out var parent) && seen.Add(parent.ProcessId))
+        {
+            if (!Matches(parent, query))
+            {
+                break;
+            }
+
+            best = parent;
+            current = parent;
+        }
+
+        return best;
+    }
+
+    private static IReadOnlyList<ProcessRecord> CollectTree(int rootPid, IReadOnlyDictionary<int, List<ProcessRecord>> childrenByParent)
+    {
+        var tree = new List<ProcessRecord>();
+        var pending = new Stack<int>();
+        pending.Push(rootPid);
+
+        while (pending.Count > 0)
+        {
+            var parent = pending.Pop();
+            if (!childrenByParent.TryGetValue(parent, out var children))
+            {
+                continue;
+            }
+
+            foreach (var child in children)
+            {
+                tree.Add(child);
+                pending.Push(child.ProcessId);
+            }
+        }
+
+        return tree;
     }
 
     private static int CountDescendants(int rootPid, IReadOnlyList<ProcessRecord> processes)
@@ -92,6 +218,97 @@ internal static class ProcessCatalog
         }
 
         return count;
+    }
+
+    private static List<ProcessRecord> ReadProcessRecords() =>
+        WmiProcess.ReadAll()
+            .Select(process => process.ToRecord())
+            .ToList();
+
+    private static bool Matches(ProcessRecord process, string query) =>
+        process.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
+        || process.ExecutablePath?.Contains(query, StringComparison.OrdinalIgnoreCase) == true
+        || process.CommandLine?.Contains(query, StringComparison.OrdinalIgnoreCase) == true
+        || process.ProcessId.ToString(CultureInfo.InvariantCulture).Equals(query, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsLikelyUserAppRoot(ProcessRecord process, IReadOnlyDictionary<int, ProcessRecord> byPid)
+    {
+        var name = Path.GetFileNameWithoutExtension(process.Name);
+        if (IsSystemProcessName(name)
+            || IsAppLedgerSelfReference(process)
+            || string.IsNullOrWhiteSpace(process.ExecutablePath)
+            || IsWindowsShellNoise(process))
+        {
+            return false;
+        }
+
+        if (!byPid.TryGetValue(process.ParentProcessId, out var parent))
+        {
+            return true;
+        }
+
+        if (parent.Name.Equals(process.Name, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(parent.ExecutablePath, process.ExecutablePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return parent.Name.Equals("explorer.exe", StringComparison.OrdinalIgnoreCase)
+            || IsSystemProcessName(Path.GetFileNameWithoutExtension(parent.Name));
+    }
+
+    private static bool IsSystemProcessName(string name)
+    {
+        var systemNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "system",
+            "registry",
+            "idle",
+            "smss",
+            "csrss",
+            "wininit",
+            "services",
+            "lsass",
+            "svchost",
+            "fontdrvhost",
+            "dwm",
+            "conhost",
+            "dllhost",
+            "runtimebroker",
+            "sihost",
+            "taskhostw",
+            "searchindexer",
+            "unsecapp",
+            "vbcscompiler"
+        };
+
+        return systemNames.Contains(name);
+    }
+
+    private static bool IsWindowsShellNoise(ProcessRecord process)
+    {
+        if (string.IsNullOrWhiteSpace(process.ExecutablePath))
+        {
+            return false;
+        }
+
+        var windowsRoot = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        if (process.ExecutablePath.StartsWith(windowsRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            && !process.Name.Equals("explorer.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return process.ExecutablePath.Contains(@"\WindowsApps\Microsoft", StringComparison.OrdinalIgnoreCase)
+            || process.ExecutablePath.Contains(@"\WindowsApps\MicrosoftWindows.", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsAppLedgerSelfReference(ProcessRecord process)
+    {
+        var name = Path.GetFileNameWithoutExtension(process.Name);
+        return name.Equals("appledger", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("dotnet", StringComparison.OrdinalIgnoreCase)
+            || process.ExecutablePath?.Contains(@"\AppLedger.Cli\", StringComparison.OrdinalIgnoreCase) == true;
     }
 
     private static ProcessRecord? TryReadByPid(int pid)
@@ -125,6 +342,66 @@ internal static class ProcessCatalog
         {
             return default;
         }
+    }
+}
+
+internal sealed record RunningAppGroup(
+    ProcessRecord Root,
+    int ProcessCount,
+    int MatchingProcessCount,
+    int ChildProcessCount,
+    bool HasMatchedDescendant,
+    string MatchReason);
+
+internal sealed class RunningAppGroupBuilder(ProcessRecord root)
+{
+    public ProcessRecord Root { get; } = root;
+
+    public int ProcessCount { get; set; } = 1;
+
+    public int MatchingProcessCount { get; set; }
+
+    public int ChildProcessCount { get; set; }
+
+    public bool HasMatchedDescendant { get; set; }
+
+    public RunningAppGroup ToGroup(string? query) =>
+        new(
+            Root,
+            Math.Max(1, ProcessCount),
+            MatchingProcessCount,
+            ChildProcessCount,
+            HasMatchedDescendant,
+            BuildMatchReason(query));
+
+    private string BuildMatchReason(string? query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return "running root";
+        }
+
+        if (Root.ProcessId.ToString(CultureInfo.InvariantCulture).Equals(query, StringComparison.OrdinalIgnoreCase))
+        {
+            return "pid";
+        }
+
+        if (Root.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
+        {
+            return "process name";
+        }
+
+        if (Root.ExecutablePath?.Contains(query, StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return "exe path";
+        }
+
+        if (HasMatchedDescendant)
+        {
+            return "child process";
+        }
+
+        return "command line";
     }
 }
 

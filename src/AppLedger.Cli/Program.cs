@@ -2606,12 +2606,14 @@ internal static class HtmlReport
         var processes = string.Join(Environment.NewLine, session.Processes.Select(p => $"<tr><td>{p.ProcessId}</td><td>{Esc(p.Name)}</td><td>{Esc(p.CommandLine ?? "")}</td></tr>"));
         var network = string.Join(Environment.NewLine, session.NetworkEvents.Take(200).Select(n => $"<tr><td>{n.ProcessId}</td><td>{Esc(n.RemoteAddress)}:{n.RemotePort}</td><td>{Esc(n.State)}</td></tr>"));
         var findings = string.Join(Environment.NewLine, session.Findings.Select(f => $"<li class=\"{Esc(f.Severity)}\"><strong>{Esc(f.Severity.ToUpperInvariant())}</strong> {Esc(f.Title)}<br><span>{Esc(f.Detail)}</span></li>"));
-        var folders = string.Join(Environment.NewLine, session.TopFolders.Select(f => $"<tr><td>{Esc(f.Path)}</td><td>{Esc(f.Category)}</td><td>{f.FileCount:N0}</td><td>{Format.Bytes(f.BytesAdded)}</td></tr>"));
+        var folders = string.Join(Environment.NewLine, session.TopFolders.Where(f => !IsGitInternalPath(f.Path)).Select(f => $"<tr><td>{Esc(f.Path)}</td><td>{Esc(f.Category)}</td><td>{f.FileCount:N0}</td><td>{Format.Bytes(f.BytesAdded)}</td></tr>"));
         var projectFiles = string.Join(Environment.NewLine, ai.ChangedProjectFiles.Select(RenderProjectFileRow));
         var commands = string.Join(Environment.NewLine, ai.DeveloperCommands.Select(RenderCommandRow));
         var sensitive = string.Join(Environment.NewLine, ai.SensitiveAccesses.Select(RenderSensitiveRow));
         var processGroups = string.Join(Environment.NewLine, ai.ProcessGroups.Select(RenderProcessGroupRow));
         var timeline = string.Join(Environment.NewLine, ai.ProcessTimeline.Select(RenderTimelineRow));
+        var gitMetadata = SummarizeGitInternalActivity(session.FileEvents);
+        var gitMetadataExamples = string.Join(Environment.NewLine, gitMetadata.Examples.Select(example => $"<li><code>{Esc(example)}</code></li>"));
 
         return $$"""
         <!doctype html>
@@ -2687,6 +2689,23 @@ internal static class HtmlReport
             </section>
 
             <section>
+              <h2>Git Repository Metadata</h2>
+              {{(gitMetadata.Total == 0
+                  ? "<p class=\"muted\">No internal .git write activity was summarized for this session.</p>"
+                  : $"""
+              <div class="grid">
+                <div class="metric"><strong>{gitMetadata.Total:N0}</strong><span>.git internal writes</span></div>
+                <div class="metric"><strong>{gitMetadata.Created:N0}</strong><span>created</span></div>
+                <div class="metric"><strong>{gitMetadata.Modified:N0}</strong><span>modified</span></div>
+                <div class="metric"><strong>{gitMetadata.Deleted:N0}</strong><span>deleted</span></div>
+                <div class="metric"><strong>{gitMetadata.Renamed:N0}</strong><span>renamed</span></div>
+              </div>
+              <p class="muted">Internal repository writes such as objects, refs, and logs are summarized here instead of being mixed into the main file tables. Raw events remain in JSON, CSV, and SQLite exports.</p>
+              <div class="panel"><div style="padding:14px 16px;"><ul>{gitMetadataExamples}</ul></div></div>
+              """)}}
+            </section>
+
+            <section>
               <h2>Developer Commands</h2>
               {{(ai.DeveloperCommands.Count == 0 ? "<p class=\"muted\">No package, git, test, shell, or script commands detected.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Kind</th><th>Seen</th><th>First PID</th><th>Process</th><th>Command</th></tr></thead><tbody>{commands}</tbody></table></div>")}}
             </section>
@@ -2708,12 +2727,12 @@ internal static class HtmlReport
 
             <section>
               <h2>Top Folders Touched</h2>
-              <div class="panel"><table><thead><tr><th>Folder</th><th>Category</th><th>Files</th><th>Growth</th></tr></thead><tbody>{{folders}}</tbody></table></div>
+              {{(string.IsNullOrWhiteSpace(folders) ? "<p class=\"muted\">No non-.git folder writes were summarized for this session.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Folder</th><th>Category</th><th>Files</th><th>Growth</th></tr></thead><tbody>{folders}</tbody></table></div>")}}
             </section>
 
             <section>
               <h2>Files</h2>
-              <p class="muted">This table prioritizes writes, sensitive reads, and a deduplicated sample of other reads. Raw events remain in JSON, CSV, and SQLite exports.</p>
+              <p class="muted">This table prioritizes writes, sensitive reads, and a deduplicated sample of other reads. Internal .git writes are summarized separately. Raw events remain in JSON, CSV, and SQLite exports.</p>
               <div class="panel"><table><thead><tr><th>Action</th><th>Source</th><th>PID</th><th>Category</th><th>Delta</th><th>Path</th></tr></thead><tbody>{{rows}}</tbody></table></div>
             </section>
 
@@ -2756,6 +2775,7 @@ internal static class HtmlReport
     {
         var writes = events
             .Where(file => file.Kind is FileEventKind.Created or FileEventKind.Modified or FileEventKind.Deleted or FileEventKind.Renamed)
+            .Where(file => !IsGitInternalPath(file.Path))
             .OrderBy(file => file.ObservedAt)
             .Take(120);
 
@@ -2783,6 +2803,59 @@ internal static class HtmlReport
             || normalized.Contains("\\obj\\", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static GitInternalSummary SummarizeGitInternalActivity(IReadOnlyList<FileEvent> events)
+    {
+        var writes = events
+            .Where(file => file.Kind is FileEventKind.Created or FileEventKind.Modified or FileEventKind.Deleted or FileEventKind.Renamed)
+            .Where(file => IsGitInternalPath(file.Path))
+            .ToList();
+
+        var examples = writes
+            .Select(file => DescribeGitInternalPath(file.Path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToList();
+
+        return new GitInternalSummary(
+            writes.Count,
+            writes.Count(file => file.Kind == FileEventKind.Created),
+            writes.Count(file => file.Kind == FileEventKind.Modified),
+            writes.Count(file => file.Kind == FileEventKind.Deleted),
+            writes.Count(file => file.Kind == FileEventKind.Renamed),
+            examples);
+    }
+
+    private static bool IsGitInternalPath(string path) =>
+        path.Replace('/', '\\').Contains("\\.git\\", StringComparison.OrdinalIgnoreCase);
+
+    private static string DescribeGitInternalPath(string path)
+    {
+        var normalized = path.Replace('/', '\\');
+        var gitIndex = normalized.IndexOf("\\.git\\", StringComparison.OrdinalIgnoreCase);
+        if (gitIndex < 0)
+        {
+            return path;
+        }
+
+        var relative = normalized[(gitIndex + 1)..];
+        if (relative.StartsWith(".git\\objects\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return ".git\\objects\\...";
+        }
+
+        if (relative.StartsWith(".git\\logs\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return ".git\\logs\\...";
+        }
+
+        if (relative.StartsWith(".git\\refs\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return ".git\\refs\\...";
+        }
+
+        return relative;
+    }
+
     private static string NormalizeVisiblePath(string path)
     {
         try
@@ -2796,6 +2869,8 @@ internal static class HtmlReport
     }
 
     private static string Esc(string value) => WebUtility.HtmlEncode(value);
+
+    private sealed record GitInternalSummary(int Total, int Created, int Modified, int Deleted, int Renamed, IReadOnlyList<string> Examples);
 }
 
 internal static class CsvReport

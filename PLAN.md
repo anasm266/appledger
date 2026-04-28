@@ -9,9 +9,11 @@ Working now:
 - launched-app recording
 - attach to running apps
 - whole-app live mode with `--watch-all`
+- large-session controls with `--no-reads`, `--max-events`, and `--no-sqlite`
 - watched-root snapshot diff
 - ETW file/process capture when elevated
 - sampled network endpoints with hostname enrichment when available
+- full-app summary layer with `Big Picture` and `Activity Buckets`
 - HTML / JSON / CSV / SQLite outputs
 - AI-oriented report sections
 
@@ -23,41 +25,7 @@ Verified against real sessions:
 
 ## Next Execution Order
 
-### 1. Full-App Summary Layer
-
-Make `--watch-all` readable without opening raw tables first.
-
-Build:
-
-- top-level buckets for:
-  - app data / cache
-  - temp churn
-  - project files
-  - git metadata
-  - system/runtime noise
-  - sensitive paths
-  - network destinations
-- clearer first-screen summary text
-
-Success:
-
-```txt
-Codex mostly updated temp/cache state, read .gitconfig, ran git commands,
-and contacted GitHub.
-```
-
-### 2. Large-Session Controls
-
-Keep whole-app mode practical.
-
-Build:
-
-- `--no-reads`
-- `--no-sqlite`
-- `--max-events <n>`
-- optional include/exclude path filters
-
-### 3. Normalization Tests
+### 1. Normalization Tests
 
 Stop collector/report regressions.
 
@@ -70,7 +38,7 @@ Build fixture-driven tests for:
 - `.git` suppression
 - runtime-noise suppression
 
-### 4. Better Network Grouping
+### 2. Better Network Grouping
 
 Build:
 
@@ -78,7 +46,7 @@ Build:
 - cleaner network summary cards
 - prefer domain-style output in report headings
 
-### 5. Smarter AI Session Profiles
+### 3. Smarter AI Session Profiles
 
 Build first-class summaries for:
 
@@ -86,6 +54,14 @@ Build first-class summaries for:
 - Claude
 - Cursor
 - VS Code
+
+### 4. Include / Exclude Path Filters
+
+Build:
+
+- `--include <path>`
+- `--exclude <path>`
+- multi-use filters for whole-app sessions
 
 ## Not Next
 

@@ -27,6 +27,8 @@ Implemented:
 - cached DNS / reverse lookup hostname enrichment for network output
 - startup `Run` / `RunOnce` registry monitoring
 - HTML, JSON, CSV, SQLite, AI activity, and cleanup outputs
+- first-screen whole-app summary via `Big Picture` and `Activity Buckets`
+- large-session controls: `--no-reads`, `--max-events`, `--no-sqlite`
 
 Recent Phase 1 fixes:
 
@@ -38,6 +40,8 @@ Recent Phase 1 fixes:
 - `.git` and system-runtime noise grouped out of the main report tables
 - rename destination synthesis in regenerated reports
 - full-app recording validated against Codex and Claude sessions
+- full-app report summary layer implemented
+- large-session capture controls implemented
 
 Current proof point:
 
@@ -56,58 +60,17 @@ Still rough or incomplete:
 - hostname correlation is opportunistic, not guaranteed for every endpoint
 - command parsing is pragmatic, not exhaustive
 - registry coverage is narrow
-- full-app mode opens with giant counters instead of a strong human summary
-- large sessions need better capture controls
+- include/exclude path filtering is still missing
+- large sessions still need test coverage and tuning
 - no desktop UI yet
 
 These are product polish and fidelity gaps, not viability gaps. The tool is already demonstrable.
 
 ## Next Up
 
-Immediate next work should stay focused on making whole-app sessions readable and controllable.
+Immediate next work should stay focused on hardening the now-working collector/report pipeline.
 
-### 1. Full-App Summary Layer
-
-Goal: make `--watch-all` reports useful on the first screen.
-
-Build:
-
-- top-level grouping for:
-  - app data / cache
-  - temp churn
-  - project files
-  - git metadata
-  - system/runtime noise
-  - sensitive paths
-  - network destinations
-- better summary language for common AI desktop app sessions
-
-Success looks like:
-
-```txt
-Codex mostly updated temp/cache state, read .gitconfig, ran git commands,
-and contacted GitHub.
-```
-
-### 2. Large-Session Controls
-
-Goal: keep whole-app mode practical.
-
-Build:
-
-- `--no-reads`
-- `--no-sqlite`
-- `--max-events <n>`
-- optional include/exclude path filters
-
-Success looks like:
-
-```txt
-Record Codex or Claude for several minutes without drowning the report
-in low-value reads or forcing every export format.
-```
-
-### 3. Normalization Tests
+### 1. Normalization Tests
 
 Goal: harden the lifecycle/report logic that now matters to the product.
 
@@ -121,7 +84,7 @@ Build:
   - `.git` suppression
   - runtime-noise suppression
 
-### 4. Better Network Grouping
+### 2. Better Network Grouping
 
 Goal: move from "endpoints exist" to "this app talked to these services."
 
@@ -131,7 +94,7 @@ Build:
 - cleaner network summary cards
 - better unresolved-IP fallback presentation
 
-### 5. Smarter AI Session Report
+### 3. Smarter AI Session Report
 
 Goal: make Codex/Cursor/VS Code/Claude sessions the strongest demo.
 
@@ -151,7 +114,17 @@ Sensitive paths touched: .env
 Shells spawned: PowerShell
 ```
 
-### 6. Better Risk Observations
+### 4. Include / Exclude Path Filtering
+
+Goal: let whole-app mode stay broad without being noisy.
+
+Build:
+
+- `--include <path>`
+- `--exclude <path>`
+- likely multiple-use flags
+
+### 5. Better Risk Observations
 
 Goal: make the top of the report feel opinionated.
 

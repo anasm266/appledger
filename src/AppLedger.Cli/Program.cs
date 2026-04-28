@@ -121,6 +121,7 @@ internal static class Program
         while (!stop.IsCancellationRequested)
         {
             processSampler.Sample();
+            etwCollector.SyncSessionProcesses(processSampler.SessionProcessIds);
             networkSampler.Sample(processSampler.SessionProcessIds);
 
             var activeCount = processSampler.CountActiveSessionProcesses();
@@ -238,6 +239,7 @@ internal static class Program
             options.Root.ExecutablePath ?? options.Root.Name,
             options.Root.CommandLine ?? "");
         processSampler.Observe(options.Root);
+        processSampler.Sample();
         etwCollector.AttachSession(options.Root.ProcessId, processSampler);
         var networkSampler = new NetworkSampler();
 
@@ -247,6 +249,7 @@ internal static class Program
         while (!stop.IsCancellationRequested)
         {
             processSampler.Sample();
+            etwCollector.SyncSessionProcesses(processSampler.SessionProcessIds);
             networkSampler.Sample(processSampler.SessionProcessIds);
 
             var activeCount = processSampler.CountActiveSessionProcesses();
@@ -1085,6 +1088,15 @@ internal sealed class EtwCollector : IDisposable
     {
         _processSampler = processSampler;
         _sessionPids[rootPid] = 0;
+        SyncSessionProcesses(processSampler.SessionProcessIds);
+    }
+
+    public void SyncSessionProcesses(IReadOnlySet<int> processIds)
+    {
+        foreach (var pid in processIds)
+        {
+            _sessionPids[pid] = 0;
+        }
     }
 
     public void Stop()
@@ -1145,12 +1157,40 @@ internal sealed class EtwCollector : IDisposable
 
     private void AddFile(FileEventKind kind, string? path, int processId, string? processName, DateTime timestamp)
     {
-        if (string.IsNullOrWhiteSpace(path) || !_sessionPids.ContainsKey(processId) || !PathClassifier.IsUnderAnyWatchRoot(path, _watchRoots))
+        if (string.IsNullOrWhiteSpace(path) || !PathClassifier.IsUnderAnyWatchRoot(path, _watchRoots))
+        {
+            return;
+        }
+
+        if (!_sessionPids.ContainsKey(processId))
+        {
+            if (_processSampler?.ContainsProcess(processId) == true)
+            {
+                _sessionPids[processId] = 0;
+            }
+            else
+            {
+                return;
+            }
+        }
+
+        if (IsNoisyFileEvent(kind, path))
         {
             return;
         }
 
         _fileEvents.Enqueue(FileEvent.Live(kind, path, processId, processName) with { ObservedAt = timestamp });
+    }
+
+    private static bool IsNoisyFileEvent(FileEventKind kind, string path)
+    {
+        if (kind != FileEventKind.Modified)
+        {
+            return false;
+        }
+
+        var fileName = Path.GetFileName(path);
+        return string.IsNullOrWhiteSpace(fileName);
     }
 }
 

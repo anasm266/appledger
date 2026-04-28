@@ -210,7 +210,7 @@ dotnet run --project src\AppLedger.Cli -- ps codex
 .\artifacts\publish-test\appledger.exe record codex --watch .
 ```
 
-`record` prefers an already-running process and falls back to launching an app. Its default profile is `ai-code`, which enables whole-app live capture, disables high-volume file reads, caps live file events at `50,000`, and snapshots the current directory for project diffs.
+`record` prefers an already-running process and falls back to launching an app. When several matching processes exist, AppLedger picks the root of the matching process tree so commands like `record codex --watch .` include child agent/helper processes. Its default profile is `ai-code`, which enables whole-app live capture, disables high-volume file reads, caps live file events at `50,000`, and snapshots the current directory for project diffs.
 
 3. Use the app normally, then open `report.html`.
 

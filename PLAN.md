@@ -10,6 +10,7 @@ Working now:
 - attach to running apps
 - friendly `record` command for the default flow
 - `--profile ai-code` preset for AI coding sessions
+- process-name recording resolves to the root matching process tree
 - whole-app live mode with `--watch-all`
 - large-session controls with `--no-reads`, `--max-events`, and `--no-sqlite`
 - watched-root snapshot diff

@@ -30,6 +30,7 @@ Implemented:
 - grouped network summary by destination and process
 - source split out of the original single-file implementation into CLI, collection, filesystem, analysis, model, output, registry, and report modules
 - friendly `record` command and `ai-code` capture profile added
+- process-name recording now prefers the root of a matching process tree instead of an arbitrary child process
 - startup `Run` / `RunOnce` registry monitoring
 - HTML, JSON, CSV, SQLite, AI activity, and cleanup outputs
 - first-screen whole-app summary via `Big Picture` and `Activity Buckets`

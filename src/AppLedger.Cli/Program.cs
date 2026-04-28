@@ -20,7 +20,8 @@ internal static class Program
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter() }
     };
 
     public static async Task<int> Main(string[] args)
@@ -36,7 +37,9 @@ internal static class Program
             return args[0].ToLowerInvariant() switch
             {
                 "run" => await RunAsync(args.Skip(1).ToArray()),
+                "attach" => await AttachAsync(args.Skip(1).ToArray()),
                 "apps" => Apps(args.Skip(1).ToArray()),
+                "processes" or "ps" => Processes(args.Skip(1).ToArray()),
                 "report" => await ReportAsync(args.Skip(1).ToArray()),
                 "snapshot" => Snapshot(args.Skip(1).ToArray()),
                 "diff" => Diff(args.Skip(1).ToArray()),
@@ -185,6 +188,132 @@ internal static class Program
         return 0;
     }
 
+    private static async Task<int> AttachAsync(string[] args)
+    {
+        var options = AttachOptions.Parse(args);
+        if (options is null)
+        {
+            return 1;
+        }
+
+        Directory.CreateDirectory(options.OutputDirectory);
+
+        Console.WriteLine("AppLedger attach recorder");
+        Console.WriteLine($"  PID:       {options.Root.ProcessId}");
+        Console.WriteLine($"  App:       {options.Root.ExecutablePath ?? options.Root.Name}");
+        Console.WriteLine($"  Output:    {options.OutputDirectory}");
+        Console.WriteLine($"  Watch:     {string.Join("; ", options.WatchRoots)}");
+        Console.WriteLine();
+
+        Console.WriteLine("Taking before snapshot...");
+        var before = FileSnapshot.Capture(options.WatchRoots);
+        var registryBefore = RegistrySnapshot.Capture();
+
+        using var stop = new CancellationTokenSource();
+        using var etwCollector = EtwCollector.TryStart(options.WatchRoots);
+        if (etwCollector.IsRunning)
+        {
+            Console.WriteLine("ETW:       live kernel file/process capture enabled");
+        }
+        else if (!string.IsNullOrWhiteSpace(etwCollector.Status))
+        {
+            Console.WriteLine($"ETW:       unavailable ({etwCollector.Status})");
+        }
+
+        Console.CancelKeyPress += (_, e) =>
+        {
+            e.Cancel = true;
+            stop.Cancel();
+            Console.WriteLine("Stopping recording...");
+        };
+
+        if (options.Timeout is not null)
+        {
+            stop.CancelAfter(options.Timeout.Value);
+        }
+
+        var startedAt = DateTimeOffset.Now;
+        var processSampler = new ProcessSampler(
+            options.Root.ProcessId,
+            options.Root.ExecutablePath ?? options.Root.Name,
+            options.Root.CommandLine ?? "");
+        processSampler.Observe(options.Root);
+        etwCollector.AttachSession(options.Root.ProcessId, processSampler);
+        var networkSampler = new NetworkSampler();
+
+        Console.WriteLine($"Recording existing PID {options.Root.ProcessId}. Press Ctrl+C to stop.");
+        var emptyTreeSamples = 0;
+
+        while (!stop.IsCancellationRequested)
+        {
+            processSampler.Sample();
+            networkSampler.Sample(processSampler.SessionProcessIds);
+
+            var activeCount = processSampler.CountActiveSessionProcesses();
+            if (activeCount == 0)
+            {
+                emptyTreeSamples++;
+                if (emptyTreeSamples >= 3)
+                {
+                    break;
+                }
+            }
+            else
+            {
+                emptyTreeSamples = 0;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(750), stop.Token).ContinueWith(_ => { });
+        }
+
+        var endedAt = DateTimeOffset.Now;
+        etwCollector.Stop();
+        Console.WriteLine("Taking after snapshot...");
+        var after = FileSnapshot.Capture(options.WatchRoots);
+        var registryAfter = RegistrySnapshot.Capture();
+
+        var fileEvents = FileEventMerger.Merge(etwCollector.FileEvents, FileDiff.Compare(before, after));
+        processSampler.Merge(etwCollector.Processes);
+        var registryEvents = RegistrySnapshot.Compare(registryBefore, registryAfter);
+        var session = SessionReport.Build(
+            options.Root.ExecutablePath ?? options.Root.Name,
+            options.Root.CommandLine ?? "",
+            startedAt,
+            endedAt,
+            options.WatchRoots,
+            before,
+            after,
+            fileEvents,
+            processSampler.Processes.Values.OrderBy(p => p.FirstSeen).ToList(),
+            networkSampler.Events.OrderBy(e => e.FirstSeen).ToList(),
+            registryEvents);
+
+        var outputs = (await SessionOutputs.WriteAsync(session, options.OutputDirectory, JsonOptions)).ToList();
+        var sqlitePath = Path.Combine(options.OutputDirectory, "session.sqlite");
+        SessionStore.Write(sqlitePath, session);
+        outputs.Add(sqlitePath);
+
+        Console.WriteLine();
+        Console.WriteLine($"AppLedger Report: {options.Root.Name} ({options.Root.ProcessId})");
+        Console.WriteLine($"  Files created:  {session.Summary.FilesCreated}");
+        Console.WriteLine($"  Files modified: {session.Summary.FilesModified}");
+        Console.WriteLine($"  Files deleted:  {session.Summary.FilesDeleted}");
+        Console.WriteLine($"  File reads:     {session.Summary.FilesRead}");
+        Console.WriteLine($"  File renames:   {session.Summary.FilesRenamed}");
+        Console.WriteLine($"  Processes:      {session.Processes.Count}");
+        Console.WriteLine($"  Commands:       {session.Processes.Count(p => !string.IsNullOrWhiteSpace(p.CommandLine))}");
+        Console.WriteLine($"  Connections:    {session.NetworkEvents.Count}");
+        Console.WriteLine($"  Findings:       {session.Findings.Count}");
+        Console.WriteLine();
+        Console.WriteLine("Generated:");
+        foreach (var output in outputs)
+        {
+            Console.WriteLine($"  {output}");
+        }
+
+        return 0;
+    }
+
     private static int Apps(string[] args)
     {
         var query = args.FirstOrDefault(arg => !arg.StartsWith("--", StringComparison.Ordinal));
@@ -203,6 +332,29 @@ internal static class Program
         foreach (var app in apps)
         {
             Console.WriteLine($"{app.Name,-34} {app.Path}");
+        }
+
+        return 0;
+    }
+
+    private static int Processes(string[] args)
+    {
+        var query = args.FirstOrDefault(arg => !arg.StartsWith("--", StringComparison.Ordinal));
+        var processes = ProcessCatalog.Find(query)
+            .Take(100)
+            .ToList();
+
+        if (processes.Count == 0)
+        {
+            Console.WriteLine(string.IsNullOrWhiteSpace(query)
+                ? "No processes found."
+                : $"No processes found for '{query}'.");
+            return 0;
+        }
+
+        foreach (var process in processes)
+        {
+            Console.WriteLine($"{process.ProcessId,7} {process.ParentProcessId,7} {process.Name,-24} {process.ExecutablePath ?? process.CommandLine}");
         }
 
         return 0;
@@ -303,7 +455,9 @@ internal static class Program
 
         Usage:
           appledger apps [search]
+          appledger ps [search]
           appledger run <app name|alias|exe> [--args "<arguments>"] [--watch <path>] [--out <dir>] [--timeout <seconds>]
+          appledger attach <pid|process search> [--watch <path>] [--out <dir>] [--timeout <seconds>]
           appledger report <session.json|session.sqlite> [--out <dir>]
           appledger snapshot <output.json> --watch <path>
           appledger diff <before.json> <after.json>
@@ -311,6 +465,8 @@ internal static class Program
         Examples:
           appledger apps code
           appledger run code --watch "C:\Users\Anas\Projects\demo-app"
+          appledger ps codex
+          appledger attach 20376 --watch "C:\Users\Anas\Documents\New project 8" --out artifacts\codex-self --timeout 300
           appledger run "C:\Windows\System32\notepad.exe" --watch "%USERPROFILE%\Documents"
           appledger run "C:\Path\To\Code.exe" --watch "C:\Users\Anas\Projects\demo-app"
 
@@ -382,6 +538,61 @@ internal sealed record RunOptions(
             output,
             watchRoots,
             timeout);
+    }
+}
+
+internal sealed record AttachOptions(
+    ProcessRecord Root,
+    string OutputDirectory,
+    IReadOnlyList<string> WatchRoots,
+    TimeSpan? Timeout)
+{
+    public static AttachOptions? Parse(string[] args)
+    {
+        if (args.Length == 0)
+        {
+            Console.Error.WriteLine("Usage: appledger attach <pid|process search> [--watch <path>] [--out <dir>] [--timeout <seconds>]");
+            return null;
+        }
+
+        var query = args[0].Trim('"');
+        var root = ProcessCatalog.Resolve(query);
+        if (root is null)
+        {
+            Console.Error.WriteLine($"Could not resolve running process: {query}");
+            Console.Error.WriteLine($"Try: appledger ps \"{query}\"");
+            return null;
+        }
+
+        var output = Cli.GetOption(args, "--out")
+            ?? Path.Combine(Directory.GetCurrentDirectory(), "appledger-runs", DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture));
+        output = Path.GetFullPath(Environment.ExpandEnvironmentVariables(output));
+
+        var watchRoots = Cli.GetRepeatedOption(args, "--watch")
+            .Select(Environment.ExpandEnvironmentVariables)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(Path.GetFullPath)
+            .Where(Directory.Exists)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (watchRoots.Count == 0)
+        {
+            watchRoots.Add(Directory.GetCurrentDirectory());
+            var temp = Path.GetTempPath();
+            if (Directory.Exists(temp))
+            {
+                watchRoots.Add(temp);
+            }
+        }
+
+        TimeSpan? timeout = null;
+        if (int.TryParse(Cli.GetOption(args, "--timeout"), out var timeoutSeconds) && timeoutSeconds > 0)
+        {
+            timeout = TimeSpan.FromSeconds(timeoutSeconds);
+        }
+
+        return new AttachOptions(root, output, watchRoots, timeout);
     }
 }
 
@@ -1075,6 +1286,88 @@ internal static class TcpTable
 
 internal sealed record TcpRow(int ProcessId, string LocalAddress, int LocalPort, string RemoteAddress, int RemotePort, string State);
 
+internal static class ProcessCatalog
+{
+    public static ProcessRecord? Resolve(string query)
+    {
+        if (int.TryParse(query, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pid))
+        {
+            return Find(null).FirstOrDefault(process => process.ProcessId == pid) ?? TryReadByPid(pid);
+        }
+
+        return Find(query).FirstOrDefault();
+    }
+
+    public static IEnumerable<ProcessRecord> Find(string? query)
+    {
+        var processes = WmiProcess.ReadAll()
+            .Select(process => process.ToRecord())
+            .OrderBy(process => Score(process, query))
+            .ThenBy(process => process.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(process => process.ProcessId)
+            .AsEnumerable();
+
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            processes = processes.Where(process =>
+                process.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
+                || process.ExecutablePath?.Contains(query, StringComparison.OrdinalIgnoreCase) == true
+                || process.CommandLine?.Contains(query, StringComparison.OrdinalIgnoreCase) == true
+                || process.ProcessId.ToString(CultureInfo.InvariantCulture).Equals(query, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return processes;
+    }
+
+    private static int Score(ProcessRecord process, string? query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return 10;
+        }
+
+        if (process.ProcessId.ToString(CultureInfo.InvariantCulture).Equals(query, StringComparison.OrdinalIgnoreCase)) return 0;
+        if (process.Name.Equals(query, StringComparison.OrdinalIgnoreCase)) return 1;
+        if (Path.GetFileNameWithoutExtension(process.Name).Equals(query, StringComparison.OrdinalIgnoreCase)) return 2;
+        if (process.ExecutablePath?.EndsWith(query + ".exe", StringComparison.OrdinalIgnoreCase) == true) return 3;
+        if (process.Name.StartsWith(query, StringComparison.OrdinalIgnoreCase)) return 4;
+        return 5;
+    }
+
+    private static ProcessRecord? TryReadByPid(int pid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return new ProcessRecord(
+                process.Id,
+                0,
+                process.ProcessName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? process.ProcessName : process.ProcessName + ".exe",
+                TryGet(() => process.MainModule?.FileName),
+                null,
+                TryGet(() => new DateTimeOffset(process.StartTime)),
+                DateTimeOffset.Now,
+                DateTimeOffset.Now);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return null;
+        }
+    }
+
+    private static T? TryGet<T>(Func<T?> get)
+    {
+        try
+        {
+            return get();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return default;
+        }
+    }
+}
+
 internal static class AppCatalog
 {
     private static readonly string[] ExecutableExtensions = [".exe", ".cmd", ".bat"];
@@ -1481,6 +1774,7 @@ internal sealed record SessionReport(
     IReadOnlyList<RegistryEvent> RegistryEvents,
     IReadOnlyList<Finding> Findings,
     IReadOnlyList<FolderImpact> TopFolders,
+    AiCodingActivity? AiActivity,
     IReadOnlyList<string> SnapshotErrors)
 {
     public static SessionReport Build(
@@ -1498,6 +1792,7 @@ internal sealed record SessionReport(
     {
         var topFolders = BuildFolderImpact(fileEvents);
         var findings = Analyzer.Find(fileEvents, processes, networkEvents, registryEvents, topFolders);
+        var aiActivity = AiCodingAnalyzer.Build(watchRoots, fileEvents, processes);
         var summary = new SessionSummary(
             fileEvents.Count(e => e.Kind == FileEventKind.Read),
             fileEvents.Count(e => e.Kind == FileEventKind.Created),
@@ -1524,6 +1819,7 @@ internal sealed record SessionReport(
             registryEvents,
             findings,
             topFolders,
+            aiActivity,
             before.Errors.Concat(after.Errors).Distinct().Take(200).ToList());
     }
 
@@ -1560,6 +1856,26 @@ internal sealed record SessionSummary(
 internal sealed record FolderImpact(string Path, int FileCount, long BytesAdded, string Category);
 
 internal sealed record Finding(string Severity, string Title, string Detail);
+
+internal sealed record AiCodingActivity(
+    ProjectChangeSummary ProjectChanges,
+    IReadOnlyList<ProjectFileChange> ChangedProjectFiles,
+    CommandSummary Commands,
+    IReadOnlyList<CommandActivity> DeveloperCommands,
+    IReadOnlyList<SensitiveAccess> SensitiveAccesses,
+    IReadOnlyList<ProcessTimelineItem> ProcessTimeline);
+
+internal sealed record ProjectChangeSummary(int Created, int Modified, int Deleted, int Renamed, int TotalChanged);
+
+internal sealed record ProjectFileChange(FileEventKind Kind, string Path, string RelativePath, string Category, string Source, DateTimeOffset ObservedAt);
+
+internal sealed record CommandSummary(int Total, int PackageInstalls, int GitCommands, int TestCommands, int ShellCommands, int ScriptCommands);
+
+internal sealed record CommandActivity(string Kind, int ProcessId, int ParentProcessId, string ProcessName, string CommandLine, DateTimeOffset FirstSeen);
+
+internal sealed record SensitiveAccess(FileEventKind Kind, string Path, string RelativePath, string Source, int? ProcessId, string? ProcessName, DateTimeOffset ObservedAt);
+
+internal sealed record ProcessTimelineItem(int ProcessId, int ParentProcessId, string Name, string? CommandLine, DateTimeOffset FirstSeen, DateTimeOffset LastSeen, double DurationSeconds);
 
 internal static class Analyzer
 {
@@ -1620,6 +1936,216 @@ internal static class Analyzer
     }
 }
 
+internal static class AiCodingAnalyzer
+{
+    private static readonly string[] ProjectNoiseSegments =
+    [
+        "\\node_modules\\",
+        "\\.git\\",
+        "\\bin\\",
+        "\\obj\\",
+        "\\dist\\",
+        "\\build\\",
+        "\\.next\\",
+        "\\.turbo\\",
+        "\\coverage\\"
+    ];
+
+    public static AiCodingActivity Build(
+        IReadOnlyList<string> watchRoots,
+        IReadOnlyList<FileEvent> files,
+        IReadOnlyList<ProcessRecord> processes)
+    {
+        var changedProjectFiles = files
+            .Where(file => file.Kind is FileEventKind.Created or FileEventKind.Modified or FileEventKind.Deleted or FileEventKind.Renamed)
+            .Where(file => IsProjectFile(file.Path, watchRoots))
+            .GroupBy(file => $"{file.Kind}|{Normalize(file.Path)}", StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderByDescending(file => SourceRank(file.Source)).ThenByDescending(file => file.ObservedAt).First())
+            .OrderBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
+            .Select(file => new ProjectFileChange(
+                file.Kind,
+                file.Path,
+                RelativeToWatchRoot(file.Path, watchRoots),
+                file.Category,
+                file.Source,
+                file.ObservedAt))
+            .ToList();
+
+        var projectSummary = new ProjectChangeSummary(
+            changedProjectFiles.Count(file => file.Kind == FileEventKind.Created),
+            changedProjectFiles.Count(file => file.Kind == FileEventKind.Modified),
+            changedProjectFiles.Count(file => file.Kind == FileEventKind.Deleted),
+            changedProjectFiles.Count(file => file.Kind == FileEventKind.Renamed),
+            changedProjectFiles.Select(file => Normalize(file.Path)).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+
+        var developerCommands = processes
+            .Where(process => !string.IsNullOrWhiteSpace(process.CommandLine))
+            .SelectMany(ClassifyCommands)
+            .OrderBy(command => command.FirstSeen)
+            .ThenBy(command => command.Kind, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var commandSummary = new CommandSummary(
+            processes.Count(process => !string.IsNullOrWhiteSpace(process.CommandLine)),
+            developerCommands.Count(command => command.Kind == "package-install"),
+            developerCommands.Count(command => command.Kind == "git"),
+            developerCommands.Count(command => command.Kind == "test"),
+            developerCommands.Count(command => command.Kind == "shell"),
+            developerCommands.Count(command => command.Kind == "script"));
+
+        var sensitiveAccesses = files
+            .Where(file => file.IsSensitive)
+            .GroupBy(file => $"{file.Kind}|{Normalize(file.Path)}|{file.ProcessId}", StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderBy(file => file.ObservedAt).First())
+            .OrderBy(file => file.ObservedAt)
+            .Select(file => new SensitiveAccess(
+                file.Kind,
+                file.Path,
+                RelativeToWatchRoot(file.Path, watchRoots),
+                file.Source,
+                file.ProcessId,
+                file.ProcessName,
+                file.ObservedAt))
+            .Take(50)
+            .ToList();
+
+        var processTimeline = processes
+            .OrderBy(process => process.FirstSeen)
+            .ThenBy(process => process.ProcessId)
+            .Select(process => new ProcessTimelineItem(
+                process.ProcessId,
+                process.ParentProcessId,
+                process.Name,
+                process.CommandLine,
+                process.FirstSeen,
+                process.LastSeen,
+                Math.Max(0, (process.LastSeen - process.FirstSeen).TotalSeconds)))
+            .ToList();
+
+        return new AiCodingActivity(
+            projectSummary,
+            changedProjectFiles.Take(200).ToList(),
+            commandSummary,
+            developerCommands.Take(100).ToList(),
+            sensitiveAccesses,
+            processTimeline);
+    }
+
+    private static bool IsProjectFile(string path, IReadOnlyList<string> watchRoots)
+    {
+        if (!PathClassifier.IsUnderAnyWatchRoot(path, watchRoots))
+        {
+            return false;
+        }
+
+        var normalized = path.Replace('/', '\\');
+        if (ProjectNoiseSegments.Any(segment => normalized.Contains(segment, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        var fileName = Path.GetFileName(normalized);
+        return !fileName.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)
+            && !fileName.EndsWith(".log", StringComparison.OrdinalIgnoreCase)
+            && !fileName.EndsWith(".cache", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IEnumerable<CommandActivity> ClassifyCommands(ProcessRecord process)
+    {
+        var command = process.CommandLine ?? "";
+        var name = process.Name;
+        var kinds = new List<string>();
+
+        if (IsPackageInstall(command)) kinds.Add("package-install");
+        if (ContainsCommand(command, name, "git")) kinds.Add("git");
+        if (IsTestCommand(command)) kinds.Add("test");
+        if (IsScriptCommand(command)) kinds.Add("script");
+        if (IsShell(name, command)) kinds.Add("shell");
+
+        foreach (var kind in kinds.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            yield return new CommandActivity(
+                kind,
+                process.ProcessId,
+                process.ParentProcessId,
+                process.Name,
+                process.CommandLine ?? process.Name,
+                process.FirstSeen);
+        }
+    }
+
+    private static bool IsPackageInstall(string command) =>
+        command.Contains("npm install", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("npm i ", StringComparison.OrdinalIgnoreCase)
+        || command.EndsWith("npm i", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("pnpm add", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("pnpm install", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("yarn add", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("yarn install", StringComparison.OrdinalIgnoreCase)
+        || (command.Contains("npm-cli.js", StringComparison.OrdinalIgnoreCase) && (command.Contains(" install", StringComparison.OrdinalIgnoreCase) || command.Contains(" add", StringComparison.OrdinalIgnoreCase)))
+        || command.Contains("pip install", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("uv add", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("cargo add", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("dotnet add package", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsTestCommand(string command) =>
+        command.Contains("npm test", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("npm run test", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("pnpm test", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("yarn test", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("dotnet test", StringComparison.OrdinalIgnoreCase)
+        || (command.Contains("npm-cli.js", StringComparison.OrdinalIgnoreCase) && command.Contains(" test", StringComparison.OrdinalIgnoreCase))
+        || command.Contains("pytest", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("cargo test", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("go test", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("mvn test", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("gradle test", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsScriptCommand(string command) =>
+        command.Contains(".py", StringComparison.OrdinalIgnoreCase)
+        || command.Contains(".ps1", StringComparison.OrdinalIgnoreCase)
+        || command.Contains(".sh", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("node ", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("python ", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("pwsh ", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsShell(string name, string command) =>
+        name.Equals("powershell.exe", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("pwsh.exe", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("cmd.exe", StringComparison.OrdinalIgnoreCase)
+        || command.Contains("ExecutionPolicy", StringComparison.OrdinalIgnoreCase);
+
+    private static bool ContainsCommand(string command, string processName, string executable) =>
+        processName.Equals(executable + ".exe", StringComparison.OrdinalIgnoreCase)
+        || command.Contains(executable + " ", StringComparison.OrdinalIgnoreCase)
+        || command.EndsWith(executable, StringComparison.OrdinalIgnoreCase);
+
+    private static int SourceRank(string source) => source.Equals("etw", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+
+    private static string Normalize(string path) => Path.GetFullPath(path).TrimEnd('\\');
+
+    private static string RelativeToWatchRoot(string path, IReadOnlyList<string> roots)
+    {
+        foreach (var root in roots)
+        {
+            try
+            {
+                var relative = Path.GetRelativePath(root, path);
+                if (!relative.StartsWith("..", StringComparison.Ordinal) && !Path.IsPathRooted(relative))
+                {
+                    return relative;
+                }
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+            {
+                continue;
+            }
+        }
+
+        return path;
+    }
+}
+
 internal static class SessionOutputs
 {
     public static async Task<IReadOnlyList<string>> WriteAsync(SessionReport session, string outputDirectory, JsonSerializerOptions jsonOptions)
@@ -1630,15 +2156,17 @@ internal static class SessionOutputs
         var htmlPath = Path.Combine(outputDirectory, "report.html");
         var csvPath = Path.Combine(outputDirectory, "touched-files.csv");
         var commandsPath = Path.Combine(outputDirectory, "commands.json");
+        var aiActivityPath = Path.Combine(outputDirectory, "ai-activity.json");
         var cleanupPath = Path.Combine(outputDirectory, "cleanup.ps1");
 
         await File.WriteAllTextAsync(jsonPath, JsonSerializer.Serialize(session, jsonOptions), Encoding.UTF8);
         await File.WriteAllTextAsync(htmlPath, HtmlReport.Render(session), Encoding.UTF8);
         await File.WriteAllTextAsync(csvPath, CsvReport.RenderFiles(session.FileEvents), Encoding.UTF8);
         await File.WriteAllTextAsync(commandsPath, JsonSerializer.Serialize(session.Processes.Where(p => !string.IsNullOrWhiteSpace(p.CommandLine)), jsonOptions), Encoding.UTF8);
+        await File.WriteAllTextAsync(aiActivityPath, JsonSerializer.Serialize(session.AiActivity, jsonOptions), Encoding.UTF8);
         await File.WriteAllTextAsync(cleanupPath, CleanupScript.Render(session), Encoding.UTF8);
 
-        return [htmlPath, jsonPath, csvPath, commandsPath, cleanupPath];
+        return [htmlPath, jsonPath, csvPath, commandsPath, aiActivityPath, cleanupPath];
     }
 }
 
@@ -1774,7 +2302,8 @@ internal static class ProgramJson
     public static JsonSerializerOptions Options { get; } = new()
     {
         WriteIndented = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter() }
     };
 }
 
@@ -1782,12 +2311,17 @@ internal static class HtmlReport
 {
     public static string Render(SessionReport session)
     {
+        var ai = session.AiActivity ?? AiCodingAnalyzer.Build(session.WatchRoots, session.FileEvents, session.Processes);
         var appName = WebUtility.HtmlEncode(Path.GetFileName(session.App));
         var rows = string.Join(Environment.NewLine, session.FileEvents.Take(200).Select(RenderFileRow));
         var processes = string.Join(Environment.NewLine, session.Processes.Select(p => $"<tr><td>{p.ProcessId}</td><td>{Esc(p.Name)}</td><td>{Esc(p.CommandLine ?? "")}</td></tr>"));
         var network = string.Join(Environment.NewLine, session.NetworkEvents.Take(200).Select(n => $"<tr><td>{n.ProcessId}</td><td>{Esc(n.RemoteAddress)}:{n.RemotePort}</td><td>{Esc(n.State)}</td></tr>"));
         var findings = string.Join(Environment.NewLine, session.Findings.Select(f => $"<li class=\"{Esc(f.Severity)}\"><strong>{Esc(f.Severity.ToUpperInvariant())}</strong> {Esc(f.Title)}<br><span>{Esc(f.Detail)}</span></li>"));
         var folders = string.Join(Environment.NewLine, session.TopFolders.Select(f => $"<tr><td>{Esc(f.Path)}</td><td>{Esc(f.Category)}</td><td>{f.FileCount:N0}</td><td>{Format.Bytes(f.BytesAdded)}</td></tr>"));
+        var projectFiles = string.Join(Environment.NewLine, ai.ChangedProjectFiles.Select(RenderProjectFileRow));
+        var commands = string.Join(Environment.NewLine, ai.DeveloperCommands.Select(RenderCommandRow));
+        var sensitive = string.Join(Environment.NewLine, ai.SensitiveAccesses.Select(RenderSensitiveRow));
+        var timeline = string.Join(Environment.NewLine, ai.ProcessTimeline.Select(RenderTimelineRow));
 
         return $$"""
         <!doctype html>
@@ -1814,6 +2348,7 @@ internal static class HtmlReport
             th, td { padding:10px 12px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
             th { background:#eef2f7; color:#364454; font-weight:600; }
             code { font-family:Cascadia Mono, Consolas, monospace; font-size:12px; }
+            .tag { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:2px 8px; background:#f7f9fc; color:#364454; font-size:12px; }
             ul.findings { list-style:none; padding:0; margin:0; }
             ul.findings li { background:var(--panel); border:1px solid var(--line); border-left:5px solid var(--accent); border-radius:8px; margin:10px 0; padding:12px 14px; }
             ul.findings li.high { border-left-color:var(--bad); }
@@ -1845,6 +2380,37 @@ internal static class HtmlReport
             </section>
 
             <section>
+              <h2>AI Coding Activity</h2>
+              <div class="grid">
+                <div class="metric"><strong>{{ai.ProjectChanges.TotalChanged:N0}}</strong><span>project files changed</span></div>
+                <div class="metric"><strong>{{ai.Commands.PackageInstalls:N0}}</strong><span>package installs</span></div>
+                <div class="metric"><strong>{{ai.Commands.GitCommands:N0}}</strong><span>git commands</span></div>
+                <div class="metric"><strong>{{ai.Commands.TestCommands:N0}}</strong><span>test commands</span></div>
+                <div class="metric"><strong>{{ai.SensitiveAccesses.Count:N0}}</strong><span>sensitive accesses</span></div>
+              </div>
+            </section>
+
+            <section>
+              <h2>Changed Project Files</h2>
+              {{(ai.ChangedProjectFiles.Count == 0 ? "<p class=\"muted\">No project file changes detected under the watched roots.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Action</th><th>Source</th><th>Category</th><th>Path</th></tr></thead><tbody>{projectFiles}</tbody></table></div>")}}
+            </section>
+
+            <section>
+              <h2>Developer Commands</h2>
+              {{(ai.DeveloperCommands.Count == 0 ? "<p class=\"muted\">No package, git, test, shell, or script commands detected.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Kind</th><th>PID</th><th>Process</th><th>Command</th></tr></thead><tbody>{commands}</tbody></table></div>")}}
+            </section>
+
+            <section>
+              <h2>Sensitive Access</h2>
+              {{(ai.SensitiveAccesses.Count == 0 ? "<p class=\"muted\">No sensitive paths detected in the watched roots.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Action</th><th>Source</th><th>PID</th><th>Process</th><th>Path</th></tr></thead><tbody>{sensitive}</tbody></table></div>")}}
+            </section>
+
+            <section>
+              <h2>Process Timeline</h2>
+              <div class="panel"><table><thead><tr><th>First Seen</th><th>PID</th><th>Parent</th><th>Name</th><th>Duration</th><th>Command</th></tr></thead><tbody>{{timeline}}</tbody></table></div>
+            </section>
+
+            <section>
               <h2>Top Folders Touched</h2>
               <div class="panel"><table><thead><tr><th>Folder</th><th>Category</th><th>Files</th><th>Growth</th></tr></thead><tbody>{{folders}}</tbody></table></div>
             </section>
@@ -1873,6 +2439,18 @@ internal static class HtmlReport
 
     private static string RenderFileRow(FileEvent file) =>
         $"<tr><td>{Esc(file.Kind.ToString())}</td><td>{Esc(file.Source)}</td><td>{Esc(file.ProcessId?.ToString(CultureInfo.InvariantCulture) ?? "")}</td><td>{Esc(file.Category)}</td><td>{Format.Bytes(file.SizeDelta)}</td><td><code>{Esc(file.Path)}</code></td></tr>";
+
+    private static string RenderProjectFileRow(ProjectFileChange file) =>
+        $"<tr><td>{Esc(file.Kind.ToString())}</td><td>{Esc(file.Source)}</td><td>{Esc(file.Category)}</td><td><code>{Esc(file.RelativePath)}</code></td></tr>";
+
+    private static string RenderCommandRow(CommandActivity command) =>
+        $"<tr><td><span class=\"tag\">{Esc(command.Kind)}</span></td><td>{command.ProcessId}</td><td>{Esc(command.ProcessName)}</td><td><code>{Esc(command.CommandLine)}</code></td></tr>";
+
+    private static string RenderSensitiveRow(SensitiveAccess access) =>
+        $"<tr><td>{Esc(access.Kind.ToString())}</td><td>{Esc(access.Source)}</td><td>{Esc(access.ProcessId?.ToString(CultureInfo.InvariantCulture) ?? "")}</td><td>{Esc(access.ProcessName ?? "")}</td><td><code>{Esc(access.RelativePath)}</code></td></tr>";
+
+    private static string RenderTimelineRow(ProcessTimelineItem item) =>
+        $"<tr><td>{Esc(item.FirstSeen.ToString("T", CultureInfo.InvariantCulture))}</td><td>{item.ProcessId}</td><td>{item.ParentProcessId}</td><td>{Esc(item.Name)}</td><td>{item.DurationSeconds:0.0}s</td><td><code>{Esc(item.CommandLine ?? "")}</code></td></tr>";
 
     private static string Esc(string value) => WebUtility.HtmlEncode(value);
 }

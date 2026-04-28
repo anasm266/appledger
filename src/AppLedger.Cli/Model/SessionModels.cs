@@ -142,23 +142,42 @@ internal sealed record SessionReport(
 
     private static List<FileEvent> AttachProcessIdentities(IReadOnlyList<FileEvent> events, IReadOnlyDictionary<int, List<ProcessRecord>> processes) =>
         events
-            .Select(file => file.Process is not null || file.ProcessId is null
-                ? file
-                : file with { Process = ResolveProcessIdentity(file.ProcessId.Value, file.ObservedAt, processes) })
+            .Select(file =>
+            {
+                if (file.ProcessId is null)
+                {
+                    return file with { Attribution = file.Attribution ?? Attribution.Low("No process ID was available for this event.") };
+                }
+
+                var resolved = ResolveProcessIdentity(file.ProcessId.Value, file.ObservedAt, processes);
+                return file with
+                {
+                    Process = file.Process ?? resolved.Identity,
+                    Attribution = file.Attribution ?? resolved.Attribution
+                };
+            })
             .ToList();
 
     private static List<NetworkEvent> AttachProcessIdentities(IReadOnlyList<NetworkEvent> events, IReadOnlyDictionary<int, List<ProcessRecord>> processes) =>
         events
-            .Select(item => item.Process is not null
-                ? item
-                : item with { Process = ResolveProcessIdentity(item.ProcessId, item.FirstSeen, processes) })
+            .Select(item =>
+            {
+                var resolved = ResolveProcessIdentity(item.ProcessId, item.FirstSeen, processes);
+                return item with
+                {
+                    Process = item.Process ?? resolved.Identity,
+                    Attribution = item.Attribution ?? resolved.Attribution
+                };
+            })
             .ToList();
 
-    private static ProcessIdentity? ResolveProcessIdentity(int processId, DateTimeOffset observedAt, IReadOnlyDictionary<int, List<ProcessRecord>> processes)
+    internal static ProcessAttribution ResolveProcessIdentity(int processId, DateTimeOffset observedAt, IReadOnlyDictionary<int, List<ProcessRecord>> processes)
     {
         if (!processes.TryGetValue(processId, out var candidates) || candidates.Count == 0)
         {
-            return null;
+            return new ProcessAttribution(
+                null,
+                Attribution.Low("PID was not found in the observed process table; attribution is PID-only and unverified."));
         }
 
         var nearObserved = candidates
@@ -168,14 +187,26 @@ internal sealed record SessionReport(
             .OrderByDescending(process => process.CreationDate ?? process.FirstSeen)
             .FirstOrDefault();
 
-        return (nearObserved
-            ?? candidates
-                .OrderBy(process => Math.Abs((process.FirstSeen - observedAt).TotalMilliseconds))
-                .ThenByDescending(process => process.LastSeen)
-                .First())
-            .Identity;
+        if (nearObserved is not null)
+        {
+            var confidence = nearObserved.CreationDate is null
+                ? Attribution.Medium("PID matched a known session process, but process creation time was unavailable.")
+                : Attribution.High("PID matched a known process instance with creation time and observed event window.");
+            return new ProcessAttribution(nearObserved.Identity, confidence);
+        }
+
+        var nearest = candidates
+            .OrderBy(process => Math.Abs((process.FirstSeen - observedAt).TotalMilliseconds))
+            .ThenByDescending(process => process.LastSeen)
+            .First();
+        var fallbackConfidence = nearest.CreationDate is null
+            ? Attribution.Low("PID matched a process table entry outside the observed event window, and creation time was unavailable.")
+            : Attribution.Low("PID matched a process table entry outside the observed event window; possible late sampling or PID reuse.");
+        return new ProcessAttribution(nearest.Identity, fallbackConfidence);
     }
 }
+
+internal sealed record ProcessAttribution(ProcessIdentity? Identity, Attribution Attribution);
 
 internal sealed record SessionSummary(
     int FilesRead,

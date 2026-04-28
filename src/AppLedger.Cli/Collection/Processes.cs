@@ -175,5 +175,7 @@ internal sealed record ProcessRecord(
 {
     public string? CommandLineHash => ProcessIdentity.HashCommandLine(CommandLine);
 
+    public string ProcessInstanceKey => Identity.ProcessInstanceKey;
+
     public ProcessIdentity Identity => ProcessIdentity.From(this);
 }

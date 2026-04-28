@@ -42,7 +42,8 @@ internal sealed record NetworkEvent(
     string State,
     DateTimeOffset FirstSeen,
     string? RemoteHost,
-    ProcessIdentity? Process = null);
+    ProcessIdentity? Process = null,
+    Attribution? Attribution = null);
 
 internal static class NetworkResolver
 {

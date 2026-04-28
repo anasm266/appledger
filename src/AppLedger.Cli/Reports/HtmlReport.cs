@@ -34,6 +34,8 @@ internal static class HtmlReport
         var fileReadMetricLabel = captureSettings.CaptureReads
             ? "file reads"
             : "file reads disabled";
+        var attribution = SummarizeAttribution(session);
+        var attributionRows = RenderAttributionRows(attribution);
 
         return $$"""
         <!doctype html>
@@ -89,6 +91,17 @@ internal static class HtmlReport
             <section>
               <h2>Capture Settings</h2>
               <div class="panel"><table><tbody>{{captureSettingsRows}}</tbody></table></div>
+            </section>
+
+            <section>
+              <h2>Attribution Quality</h2>
+              <div class="grid">
+                <div class="metric"><strong>{{attribution.HighPercent:0.#}}%</strong><span>high confidence</span></div>
+                <div class="metric"><strong>{{attribution.MediumPercent:0.#}}%</strong><span>medium confidence</span></div>
+                <div class="metric"><strong>{{attribution.LowPercent:0.#}}%</strong><span>low confidence</span></div>
+                <div class="metric"><strong>{{attribution.Total:N0}}</strong><span>attributed events</span></div>
+              </div>
+              <div class="panel"><table><thead><tr><th>Confidence</th><th>Events</th><th>Share</th></tr></thead><tbody>{{attributionRows}}</tbody></table></div>
             </section>
 
             <section>
@@ -224,7 +237,7 @@ internal static class HtmlReport
     }
 
     private static string RenderFileRow(FileEvent file) =>
-        $"<tr><td>{Esc(file.Kind.ToString())}</td><td>{Esc(file.Source)}</td><td>{RenderProcessIdentity(file.ProcessId, file.ProcessName, file.Process)}</td><td>{Esc(file.Category)}</td><td>{Format.Bytes(file.SizeDelta)}</td><td><code>{Esc(RenderFilePath(file))}</code></td></tr>";
+        $"<tr><td>{Esc(file.Kind.ToString())}</td><td>{Esc(file.Source)}</td><td>{RenderProcessIdentity(file.ProcessId, file.ProcessName, file.Process, file.Attribution)}</td><td>{Esc(file.Category)}</td><td>{Format.Bytes(file.SizeDelta)}</td><td><code>{Esc(RenderFilePath(file))}</code></td></tr>";
 
     private static string RenderProjectFileRow(ProjectFileChange file) =>
         $"<tr><td>{Esc(file.Kind.ToString())}</td><td>{Esc(file.Source)}</td><td>{Esc(file.Category)}</td><td><code>{Esc(RenderProjectPath(file))}</code></td></tr>";
@@ -242,7 +255,7 @@ internal static class HtmlReport
         $"<tr><td>{Esc(item.FirstSeen.ToString("T", CultureInfo.InvariantCulture))}</td><td>{item.ProcessId}</td><td>{item.ParentProcessId}</td><td>{Esc(item.Name)}</td><td>{item.DurationSeconds:0.0}s</td><td><code>{Esc(item.CommandLine ?? "")}</code></td></tr>";
 
     private static string RenderNetworkRow(NetworkEvent item) =>
-        $"<tr><td>{RenderProcessIdentity(item.ProcessId, null, item.Process)}</td><td>{Esc(NetworkResolver.DisplayHostLabel(item))}</td><td>{Esc(item.RemoteAddress)}:{item.RemotePort}</td><td>{Esc(item.State)}</td></tr>";
+        $"<tr><td>{RenderProcessIdentity(item.ProcessId, null, item.Process, item.Attribution)}</td><td>{Esc(NetworkResolver.DisplayHostLabel(item))}</td><td>{Esc(item.RemoteAddress)}:{item.RemotePort}</td><td>{Esc(item.State)}</td></tr>";
 
     private static string RenderProcessRow(ProcessRecord process)
     {
@@ -269,6 +282,21 @@ internal static class HtmlReport
             <span class="muted">created {Esc(created)}</span><br>
             <code>{Esc(exe)}</code><br>
             <span class="muted">cmd {Esc(ShortHash(identity.CommandLineHash))}, seen {Esc(identity.FirstSeen.ToString("T", CultureInfo.InvariantCulture))}-{Esc(identity.LastSeen.ToString("T", CultureInfo.InvariantCulture))}</span>
+            """;
+    }
+
+    private static string RenderProcessIdentity(int? processId, string? processName, ProcessIdentity? identity, Attribution? attribution)
+    {
+        var identityHtml = RenderProcessIdentity(processId, processName, identity);
+        if (attribution is null)
+        {
+            return identityHtml;
+        }
+
+        return $"""
+            {identityHtml}<br>
+            <span class="tag">{Esc(attribution.Confidence.ToString().ToLowerInvariant())}</span>
+            <span class="muted">{Esc(attribution.Reason)}</span>
             """;
     }
 
@@ -313,6 +341,39 @@ internal static class HtmlReport
         };
 
         return string.Join(Environment.NewLine, rows.Select(row => $"<tr><th>{Esc(row.Item1)}</th><td>{Esc(row.Item2)}</td></tr>"));
+    }
+
+    private static AttributionSummary SummarizeAttribution(SessionReport session)
+    {
+        var attributions = session.FileEvents
+            .Select(file => file.Attribution)
+            .Concat(session.NetworkEvents.Select(item => item.Attribution))
+            .Where(item => item is not null)
+            .Cast<Attribution>()
+            .ToList();
+
+        if (attributions.Count == 0)
+        {
+            return new AttributionSummary(0, 0, 0, 0);
+        }
+
+        return new AttributionSummary(
+            attributions.Count,
+            attributions.Count(item => item.Confidence == AttributionConfidence.High),
+            attributions.Count(item => item.Confidence == AttributionConfidence.Medium),
+            attributions.Count(item => item.Confidence == AttributionConfidence.Low));
+    }
+
+    private static string RenderAttributionRows(AttributionSummary summary)
+    {
+        var rows = new[]
+        {
+            ("High", summary.High, summary.HighPercent),
+            ("Medium", summary.Medium, summary.MediumPercent),
+            ("Low", summary.Low, summary.LowPercent)
+        };
+
+        return string.Join(Environment.NewLine, rows.Select(row => $"<tr><td>{Esc(row.Item1)}</td><td>{row.Item2:N0}</td><td>{row.Item3:0.#}%</td></tr>"));
     }
 
     private static IEnumerable<FileEvent> VisibleFileEvents(IReadOnlyList<FileEvent> events)
@@ -484,6 +545,18 @@ internal static class HtmlReport
     }
 
     private static string Esc(string value) => WebUtility.HtmlEncode(value);
+
+    private sealed record AttributionSummary(int Total, int High, int Medium, int Low)
+    {
+        public double HighPercent => Percent(High);
+
+        public double MediumPercent => Percent(Medium);
+
+        public double LowPercent => Percent(Low);
+
+        private double Percent(int value) =>
+            Total == 0 ? 0 : value * 100.0 / Total;
+    }
 
     private sealed record GitInternalSummary(int Total, int Created, int Modified, int Deleted, int Renamed, IReadOnlyList<string> Examples);
     private sealed record SystemRuntimeSummary(int Total, int Created, int Modified, int Deleted, int Renamed, IReadOnlyList<string> Examples);

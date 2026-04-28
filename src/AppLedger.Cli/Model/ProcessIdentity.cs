@@ -19,6 +19,11 @@ internal sealed record ProcessIdentity(
             process.FirstSeen,
             process.LastSeen);
 
+    public string ProcessInstanceKey =>
+        CreationTime is null
+            ? $"{Pid}:unknown"
+            : $"{Pid}:{CreationTime.Value.ToUniversalTime():O}";
+
     public static string? HashCommandLine(string? commandLine)
     {
         if (string.IsNullOrWhiteSpace(commandLine))
@@ -29,4 +34,22 @@ internal sealed record ProcessIdentity(
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(commandLine));
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }
+}
+
+internal sealed record Attribution(
+    AttributionConfidence Confidence,
+    string Reason)
+{
+    public static Attribution High(string reason) => new(AttributionConfidence.High, reason);
+
+    public static Attribution Medium(string reason) => new(AttributionConfidence.Medium, reason);
+
+    public static Attribution Low(string reason) => new(AttributionConfidence.Low, reason);
+}
+
+internal enum AttributionConfidence
+{
+    Low,
+    Medium,
+    High
 }

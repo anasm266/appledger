@@ -839,10 +839,55 @@ internal static class FileEventMerger
             }
         }
 
+        merged = NormalizeForSession(merged);
+
         return merged
             .OrderBy(e => e.ObservedAt)
             .ThenBy(e => e.Path, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    public static List<FileEvent> NormalizeForSession(IReadOnlyList<FileEvent> events)
+    {
+        var result = events.ToList();
+        var snapshotCreates = result
+            .Where(e => e.Kind == FileEventKind.Created && e.Source.Equals("snapshot", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        foreach (var snapshotCreate in snapshotCreates)
+        {
+            var normalizedPath = Normalize(snapshotCreate.Path);
+            var liveWrites = result
+                .Where(e =>
+                    e.Source.Equals("etw", StringComparison.OrdinalIgnoreCase)
+                    && Normalize(e.Path).Equals(normalizedPath, StringComparison.OrdinalIgnoreCase)
+                    && e.Kind == FileEventKind.Modified)
+                .OrderBy(e => e.ObservedAt)
+                .ToList();
+
+            if (liveWrites.Count == 0)
+            {
+                continue;
+            }
+
+            foreach (var write in liveWrites)
+            {
+                result.Remove(write);
+            }
+
+            result.Remove(snapshotCreate);
+
+            var firstWrite = liveWrites[0];
+            result.Add(snapshotCreate with
+            {
+                Source = "normalized",
+                ObservedAt = firstWrite.ObservedAt,
+                ProcessId = firstWrite.ProcessId,
+                ProcessName = firstWrite.ProcessName
+            });
+        }
+
+        return result;
     }
 
     private static string Normalize(string path) => Path.GetFullPath(path).TrimEnd('\\');
@@ -1856,16 +1901,17 @@ internal sealed record SessionReport(
         IReadOnlyList<NetworkEvent> networkEvents,
         IReadOnlyList<RegistryEvent> registryEvents)
     {
-        var topFolders = BuildFolderImpact(fileEvents);
-        var findings = Analyzer.Find(fileEvents, processes, networkEvents, registryEvents, topFolders);
-        var aiActivity = AiCodingAnalyzer.Build(watchRoots, fileEvents, processes);
+        var normalizedFileEvents = FileEventMerger.NormalizeForSession(fileEvents);
+        var topFolders = BuildFolderImpact(normalizedFileEvents);
+        var findings = Analyzer.Find(normalizedFileEvents, processes, networkEvents, registryEvents, topFolders);
+        var aiActivity = AiCodingAnalyzer.Build(watchRoots, normalizedFileEvents, processes);
         var summary = new SessionSummary(
-            fileEvents.Count(e => e.Kind == FileEventKind.Read),
-            fileEvents.Count(e => e.Kind == FileEventKind.Created),
-            fileEvents.Count(e => e.Kind == FileEventKind.Modified),
-            fileEvents.Count(e => e.Kind == FileEventKind.Deleted),
-            fileEvents.Count(e => e.Kind == FileEventKind.Renamed),
-            fileEvents.Where(e => e.Kind != FileEventKind.Deleted).Sum(e => Math.Max(0, e.SizeDelta)),
+            normalizedFileEvents.Count(e => e.Kind == FileEventKind.Read),
+            normalizedFileEvents.Count(e => e.Kind == FileEventKind.Created),
+            normalizedFileEvents.Count(e => e.Kind == FileEventKind.Modified),
+            normalizedFileEvents.Count(e => e.Kind == FileEventKind.Deleted),
+            normalizedFileEvents.Count(e => e.Kind == FileEventKind.Renamed),
+            normalizedFileEvents.Where(e => e.Kind != FileEventKind.Deleted).Sum(e => Math.Max(0, e.SizeDelta)),
             processes.Count,
             processes.Count(p => !string.IsNullOrWhiteSpace(p.CommandLine)),
             networkEvents.Count,
@@ -1879,7 +1925,7 @@ internal sealed record SessionReport(
             endedAt,
             watchRoots,
             summary,
-            fileEvents,
+            normalizedFileEvents,
             processes,
             networkEvents,
             registryEvents,
@@ -1891,16 +1937,17 @@ internal sealed record SessionReport(
 
     public static SessionReport RefreshDerivedData(SessionReport session)
     {
-        var topFolders = BuildFolderImpact(session.FileEvents);
-        var findings = Analyzer.Find(session.FileEvents, session.Processes, session.NetworkEvents, session.RegistryEvents, topFolders);
-        var aiActivity = AiCodingAnalyzer.Build(session.WatchRoots, session.FileEvents, session.Processes);
+        var normalizedFileEvents = FileEventMerger.NormalizeForSession(session.FileEvents);
+        var topFolders = BuildFolderImpact(normalizedFileEvents);
+        var findings = Analyzer.Find(normalizedFileEvents, session.Processes, session.NetworkEvents, session.RegistryEvents, topFolders);
+        var aiActivity = AiCodingAnalyzer.Build(session.WatchRoots, normalizedFileEvents, session.Processes);
         var summary = new SessionSummary(
-            session.FileEvents.Count(e => e.Kind == FileEventKind.Read),
-            session.FileEvents.Count(e => e.Kind == FileEventKind.Created),
-            session.FileEvents.Count(e => e.Kind == FileEventKind.Modified),
-            session.FileEvents.Count(e => e.Kind == FileEventKind.Deleted),
-            session.FileEvents.Count(e => e.Kind == FileEventKind.Renamed),
-            session.FileEvents.Where(e => e.Kind != FileEventKind.Deleted).Sum(e => Math.Max(0, e.SizeDelta)),
+            normalizedFileEvents.Count(e => e.Kind == FileEventKind.Read),
+            normalizedFileEvents.Count(e => e.Kind == FileEventKind.Created),
+            normalizedFileEvents.Count(e => e.Kind == FileEventKind.Modified),
+            normalizedFileEvents.Count(e => e.Kind == FileEventKind.Deleted),
+            normalizedFileEvents.Count(e => e.Kind == FileEventKind.Renamed),
+            normalizedFileEvents.Where(e => e.Kind != FileEventKind.Deleted).Sum(e => Math.Max(0, e.SizeDelta)),
             session.Processes.Count,
             session.Processes.Count(p => !string.IsNullOrWhiteSpace(p.CommandLine)),
             session.NetworkEvents.Count,
@@ -1910,6 +1957,7 @@ internal sealed record SessionReport(
         return session with
         {
             Summary = summary,
+            FileEvents = normalizedFileEvents,
             Findings = findings,
             TopFolders = topFolders,
             AiActivity = aiActivity

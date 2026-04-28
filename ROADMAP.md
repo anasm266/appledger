@@ -16,8 +16,10 @@ Implemented:
 
 - `apps` to discover recordable apps
 - `ps` to search running processes
+- `record` as the friendly default command that attaches when possible and launches otherwise
 - `run` to launch and record an app
 - `attach` to record an already-running process tree
+- `--profile ai-code` to choose sensible AI coding session defaults
 - `--watch-all` to record whole-app live file activity
 - `report` to regenerate artifacts from `session.json` or `session.sqlite`
 - `snapshot` and `diff` for manual before/after workflows
@@ -27,6 +29,7 @@ Implemented:
 - cached DNS / reverse lookup hostname enrichment for network output
 - grouped network summary by destination and process
 - source split out of the original single-file implementation into CLI, collection, filesystem, analysis, model, output, registry, and report modules
+- friendly `record` command and `ai-code` capture profile added
 - startup `Run` / `RunOnce` registry monitoring
 - HTML, JSON, CSV, SQLite, AI activity, and cleanup outputs
 - first-screen whole-app summary via `Big Picture` and `Activity Buckets`
@@ -67,6 +70,7 @@ Still rough or incomplete:
 - command parsing is pragmatic, not exhaustive
 - registry coverage is narrow
 - include/exclude path filtering is still missing
+- only one profile exists today: `ai-code`
 - large sessions still need test coverage and tuning
 - no desktop UI yet
 - `Analysis/Analyzers.cs` is still the largest file and can be split further once AI profiles mature
@@ -77,12 +81,13 @@ These are product polish and fidelity gaps, not viability gaps. The tool is alre
 
 Immediate next work should stay focused on making AI desktop app sessions more opinionated and easier to scan.
 
-### 1. Smarter AI Session Report
+### 1. Smarter AI Session Profiles
 
 Goal: make Codex/Cursor/VS Code/Claude sessions the strongest demo.
 
 Build:
 
+- app-specific profiles beyond the generic `ai-code` profile
 - better grouping of project files vs cache/temp/internal repo files
 - command grouping by high-level action
 - improved sensitive path reporting

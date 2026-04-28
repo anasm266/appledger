@@ -8,6 +8,8 @@ Working now:
 
 - launched-app recording
 - attach to running apps
+- friendly `record` command for the default flow
+- `--profile ai-code` preset for AI coding sessions
 - whole-app live mode with `--watch-all`
 - large-session controls with `--no-reads`, `--max-events`, and `--no-sqlite`
 - watched-root snapshot diff
@@ -38,6 +40,13 @@ Build first-class summaries for:
 - VS Code
 
 Keep this refactor-friendly: if the analyzer grows while adding app-specific profiles, split `Analysis/Analyzers.cs` into profile-specific files instead of letting it become the new monolith.
+
+The generic entry point is now:
+
+```powershell
+appledger record codex --watch .
+appledger attach codex --profile ai-code
+```
 
 ### 2. Include / Exclude Path Filters
 

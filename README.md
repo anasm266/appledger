@@ -10,8 +10,10 @@ The product angle is not "ProcMon clone." ProcMon shows events. AppLedger explai
 
 Current Phase 1 capabilities:
 
+- record with a friendly default command: `record <app|process> --watch .`
 - record a launched app with `run`
 - attach to an already-running app with `attach`
+- apply capture presets with `--profile ai-code`
 - discover easy app aliases with `apps`
 - search running processes with `ps`
 - record whole-app live file activity with `--watch-all`
@@ -77,6 +79,8 @@ The report also normalizes some raw event noise into something closer to user in
 
 The best current recording modes are:
 
+- `record <app|process> --watch .` for the default user flow
+- `attach <process> --profile ai-code` for already-running AI coding tools
 - `--watch-all` for "what did this app touch anywhere"
 - `--watch <path>` for "what changed in this repo/folder"
 - both together if you want whole-app activity plus a cleaner project diff
@@ -86,6 +90,11 @@ The best current control flags for noisy sessions are:
 - `--no-reads` to drop the highest-volume ETW category
 - `--max-events <n>` to stop once the session reaches a live event cap
 - `--no-sqlite` to skip `session.sqlite` when you only want HTML/JSON/CSV
+
+Profiles bundle those flags for normal use:
+
+- `--profile ai-code` enables whole-app live capture, disables file reads, caps live file events at `50,000`, and snapshots the current directory
+- `--profile none` disables presets and leaves behavior to explicit flags
 
 ## Quick Start
 
@@ -111,10 +120,7 @@ dotnet publish src\AppLedger.Cli\AppLedger.Cli.csproj -c Release -o artifacts\pu
 Record an app you launch:
 
 ```powershell
-.\artifacts\publish-test\appledger.exe run code `
-  --watch "C:\Users\Anas\Projects\demo-app" `
-  --out artifacts\vscode-session `
-  --timeout 300
+.\artifacts\publish-test\appledger.exe record code --watch .
 ```
 
 Attach to an app that is already running:
@@ -122,33 +128,19 @@ Attach to an app that is already running:
 ```powershell
 dotnet run --project src\AppLedger.Cli -- ps codex
 
-.\artifacts\publish-test\appledger.exe attach 40396 `
-  --watch "C:\Users\Anas\Documents\New project 8" `
-  --out artifacts\codex-self `
-  --timeout 300
+.\artifacts\publish-test\appledger.exe record codex --watch .
 ```
 
 Record the full app, not just one watched root:
 
 ```powershell
-.\artifacts\publish-test\appledger.exe attach 40396 `
-  --watch-all `
-  --no-reads `
-  --max-events 50000 `
-  --out artifacts\codex-full `
-  --timeout 300
+.\artifacts\publish-test\appledger.exe attach codex --profile ai-code
 ```
 
 Record the full app and also keep a repo snapshot diff:
 
 ```powershell
-.\artifacts\publish-test\appledger.exe attach 40396 `
-  --watch-all `
-  --watch "C:\Users\Anas\Documents\New project 8" `
-  --no-reads `
-  --max-events 50000 `
-  --out artifacts\codex-full `
-  --timeout 300
+.\artifacts\publish-test\appledger.exe attach codex --profile ai-code --watch .
 ```
 
 Regenerate a report from a saved session:
@@ -178,8 +170,9 @@ dotnet test AppLedger.slnx
 ```text
 appledger apps [search]
 appledger ps [search]
-appledger run <app name|alias|exe> [--args "<arguments>"] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
-appledger attach <pid|process search> [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
+appledger record <app|process search|pid> [--profile ai-code] [--watch <path>] [--out <dir>] [--timeout <seconds>]
+appledger run <app name|alias|exe> [--args "<arguments>"] [--profile <name>] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
+appledger attach <pid|process search> [--profile <name>] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
 appledger report <session.json|session.sqlite> [--out <dir>] [--no-sqlite]
 appledger snapshot <output.json> --watch <path>
 appledger diff <before.json> <after.json>
@@ -188,6 +181,9 @@ appledger diff <before.json> <after.json>
 Useful examples:
 
 ```powershell
+appledger record codex --watch .
+appledger attach codex --profile ai-code
+
 dotnet run --project src\AppLedger.Cli -- run "C:\Windows\System32\cmd.exe" `
   --args "/c npm test" `
   --watch "."
@@ -211,14 +207,10 @@ dotnet run --project src\AppLedger.Cli -- ps codex
 2. Attach to the root PID from an elevated terminal:
 
 ```powershell
-.\artifacts\publish-test\appledger.exe attach 40396 `
-  --watch-all `
-  --watch "C:\Users\Anas\Documents\New project 8" `
-  --no-reads `
-  --max-events 50000 `
-  --out artifacts\codex-full `
-  --timeout 300
+.\artifacts\publish-test\appledger.exe record codex --watch .
 ```
+
+`record` prefers an already-running process and falls back to launching an app. Its default profile is `ai-code`, which enables whole-app live capture, disables high-volume file reads, caps live file events at `50,000`, and snapshots the current directory for project diffs.
 
 3. Use the app normally, then open `report.html`.
 

@@ -7,6 +7,24 @@ namespace AppLedger.Tests;
 public sealed class NormalizationTests
 {
     [Fact]
+    public void RunOptions_AiCodeProfile_AppliesFriendlyCaptureDefaults()
+    {
+        var options = RunOptions.Parse(["notepad", "--profile", "ai-code"]);
+
+        Assert.NotNull(options);
+        Assert.True(options.WatchAll);
+        Assert.False(options.CaptureReads);
+        Assert.Equal(50_000, options.MaxEvents);
+        Assert.Contains(Path.GetFullPath(Directory.GetCurrentDirectory()), options.WatchRoots);
+    }
+
+    [Fact]
+    public void RecordingProfile_UnknownProfile_ReturnsNull()
+    {
+        Assert.Null(RecordingProfile.Resolve("definitely-not-a-profile"));
+    }
+
+    [Fact]
     public void NormalizeForSession_PromotesSnapshotCreateWithLiveModify()
     {
         var path = @"C:\Users\Anas\Documents\demo\created.txt";

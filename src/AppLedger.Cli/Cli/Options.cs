@@ -13,10 +13,19 @@ internal sealed record RunOptions(
     TimeSpan? Timeout)
 {
     public static RunOptions? Parse(string[] args)
+        => Parse(args, defaultProfileName: null);
+
+    public static RunOptions? Parse(string[] args, string? defaultProfileName)
     {
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("Usage: appledger run <app name|alias|exe> [--args \"...\"] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>]");
+            Console.Error.WriteLine("Usage: appledger run <app name|alias|exe> [--args \"...\"] [--profile <name>] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>]");
+            return null;
+        }
+
+        var profile = RecordingProfile.Resolve(Cli.GetOption(args, "--profile") ?? defaultProfileName);
+        if (profile is null)
+        {
             return null;
         }
 
@@ -41,14 +50,19 @@ internal sealed record RunOptions(
             .Where(Directory.Exists)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var watchAll = Cli.HasFlag(args, "--watch-all");
-        var captureReads = !Cli.HasFlag(args, "--no-reads");
+        var hadExplicitWatchRoots = watchRoots.Count > 0;
+        var watchAll = Cli.HasFlag(args, "--watch-all") || profile.WatchAll;
+        var captureReads = !(Cli.HasFlag(args, "--no-reads") || profile.DisableReads);
         var writeSqlite = !Cli.HasFlag(args, "--no-sqlite");
-        var maxEvents = Cli.GetPositiveIntOption(args, "--max-events");
+        var maxEvents = Cli.GetPositiveIntOption(args, "--max-events") ?? profile.MaxEvents;
 
-        if (watchRoots.Count == 0 && !watchAll)
+        if (watchRoots.Count == 0 && (profile.IncludeCurrentDirectorySnapshot || !watchAll))
         {
             watchRoots.Add(Directory.GetCurrentDirectory());
+        }
+
+        if (!hadExplicitWatchRoots && watchRoots.Count == 1 && !watchAll && profile.IncludeTempSnapshot)
+        {
             var temp = Path.GetTempPath();
             if (Directory.Exists(temp))
             {
@@ -87,10 +101,19 @@ internal sealed record AttachOptions(
     TimeSpan? Timeout)
 {
     public static AttachOptions? Parse(string[] args)
+        => Parse(args, defaultProfileName: null);
+
+    public static AttachOptions? Parse(string[] args, string? defaultProfileName)
     {
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("Usage: appledger attach <pid|process search> [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]");
+            Console.Error.WriteLine("Usage: appledger attach <pid|process search> [--profile <name>] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]");
+            return null;
+        }
+
+        var profile = RecordingProfile.Resolve(Cli.GetOption(args, "--profile") ?? defaultProfileName);
+        if (profile is null)
+        {
             return null;
         }
 
@@ -114,14 +137,19 @@ internal sealed record AttachOptions(
             .Where(Directory.Exists)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var watchAll = Cli.HasFlag(args, "--watch-all");
-        var captureReads = !Cli.HasFlag(args, "--no-reads");
+        var hadExplicitWatchRoots = watchRoots.Count > 0;
+        var watchAll = Cli.HasFlag(args, "--watch-all") || profile.WatchAll;
+        var captureReads = !(Cli.HasFlag(args, "--no-reads") || profile.DisableReads);
         var writeSqlite = !Cli.HasFlag(args, "--no-sqlite");
-        var maxEvents = Cli.GetPositiveIntOption(args, "--max-events");
+        var maxEvents = Cli.GetPositiveIntOption(args, "--max-events") ?? profile.MaxEvents;
 
-        if (watchRoots.Count == 0 && !watchAll)
+        if (watchRoots.Count == 0 && (profile.IncludeCurrentDirectorySnapshot || !watchAll))
         {
             watchRoots.Add(Directory.GetCurrentDirectory());
+        }
+
+        if (!hadExplicitWatchRoots && watchRoots.Count == 1 && !watchAll && profile.IncludeTempSnapshot)
+        {
             var temp = Path.GetTempPath();
             if (Directory.Exists(temp))
             {
@@ -136,6 +164,53 @@ internal sealed record AttachOptions(
         }
 
         return new AttachOptions(root, output, watchRoots, watchAll, captureReads, maxEvents, writeSqlite, timeout);
+    }
+}
+
+internal sealed record RecordingProfile(
+    string Name,
+    bool WatchAll,
+    bool DisableReads,
+    int? MaxEvents,
+    bool IncludeCurrentDirectorySnapshot,
+    bool IncludeTempSnapshot)
+{
+    public static readonly RecordingProfile None = new(
+        "none",
+        WatchAll: false,
+        DisableReads: false,
+        MaxEvents: null,
+        IncludeCurrentDirectorySnapshot: false,
+        IncludeTempSnapshot: true);
+
+    public static readonly RecordingProfile AiCode = new(
+        "ai-code",
+        WatchAll: true,
+        DisableReads: true,
+        MaxEvents: 50_000,
+        IncludeCurrentDirectorySnapshot: true,
+        IncludeTempSnapshot: false);
+
+    public static RecordingProfile? Resolve(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return None;
+        }
+
+        return name.Trim().ToLowerInvariant() switch
+        {
+            "none" => None,
+            "ai-code" or "ai" or "coding" => AiCode,
+            _ => Unknown(name)
+        };
+    }
+
+    private static RecordingProfile? Unknown(string name)
+    {
+        Console.Error.WriteLine($"Unknown profile: {name}");
+        Console.Error.WriteLine("Known profiles: ai-code, none");
+        return null;
     }
 }
 

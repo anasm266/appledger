@@ -25,6 +25,7 @@ internal static class Program
             {
                 "run" => await RunAsync(args.Skip(1).ToArray()),
                 "attach" => await AttachAsync(args.Skip(1).ToArray()),
+                "record" => await RecordAsync(args.Skip(1).ToArray()),
                 "apps" => Apps(args.Skip(1).ToArray()),
                 "processes" or "ps" => Processes(args.Skip(1).ToArray()),
                 "report" => await ReportAsync(args.Skip(1).ToArray()),
@@ -40,9 +41,25 @@ internal static class Program
         }
     }
 
-    private static async Task<int> RunAsync(string[] args)
+    private static async Task<int> RecordAsync(string[] args)
     {
-        var options = RunOptions.Parse(args);
+        if (args.Length == 0)
+        {
+            return Fail("Usage: appledger record <app|process search|pid> [--profile ai-code] [--watch <path>] [--out <dir>] [--timeout <seconds>]");
+        }
+
+        var target = args[0].Trim('"');
+        if (ProcessCatalog.Resolve(target) is not null)
+        {
+            return await AttachAsync(args, defaultProfileName: "ai-code");
+        }
+
+        return await RunAsync(args, defaultProfileName: "ai-code");
+    }
+
+    private static async Task<int> RunAsync(string[] args, string? defaultProfileName = null)
+    {
+        var options = RunOptions.Parse(args, defaultProfileName);
         if (options is null)
         {
             return 1;
@@ -186,9 +203,9 @@ internal static class Program
         return 0;
     }
 
-    private static async Task<int> AttachAsync(string[] args)
+    private static async Task<int> AttachAsync(string[] args, string? defaultProfileName = null)
     {
-        var options = AttachOptions.Parse(args);
+        var options = AttachOptions.Parse(args, defaultProfileName);
         if (options is null)
         {
             return 1;
@@ -477,21 +494,25 @@ internal static class Program
         Usage:
           appledger apps [search]
           appledger ps [search]
-          appledger run <app name|alias|exe> [--args "<arguments>"] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
-          appledger attach <pid|process search> [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
+          appledger record <app|process search|pid> [--profile ai-code] [--watch <path>] [--out <dir>] [--timeout <seconds>]
+          appledger run <app name|alias|exe> [--args "<arguments>"] [--profile <name>] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
+          appledger attach <pid|process search> [--profile <name>] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
           appledger report <session.json|session.sqlite> [--out <dir>] [--no-sqlite]
           appledger snapshot <output.json> --watch <path>
           appledger diff <before.json> <after.json>
 
         Examples:
           appledger apps code
+          appledger record codex --watch .
+          appledger attach codex --profile ai-code
           appledger run code --watch "C:\Users\Anas\Projects\demo-app"
           appledger ps codex
-          appledger attach 20376 --watch "C:\Users\Anas\Documents\New project 8" --out artifacts\codex-self --timeout 300
-          appledger attach 20376 --watch-all --out artifacts\codex-full
-          appledger attach 20376 --watch-all --no-reads --max-events 50000 --out artifacts\codex-full
           appledger run "C:\Windows\System32\notepad.exe" --watch "%USERPROFILE%\Documents"
           appledger run "C:\Path\To\Code.exe" --watch "C:\Users\Anas\Projects\demo-app"
+
+        Profiles:
+          ai-code  Whole-app live capture, no file reads, 50,000 live file cap, current-directory snapshot
+          none     No preset; use explicit flags
 
         Notes:
           Phase 1 uses live ETW file/process capture when elevated, samples IPv4 TCP

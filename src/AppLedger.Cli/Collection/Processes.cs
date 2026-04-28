@@ -4,21 +4,22 @@ internal sealed class ProcessSampler
 {
     private readonly int _rootPid;
     private readonly HashSet<int> _sessionPids = [];
+    private readonly Dictionary<int, ProcessRecord> _activeSessionProcesses = [];
     private readonly object _lock = new();
 
     public ProcessSampler(int rootPid, string target, string arguments)
     {
         _rootPid = rootPid;
-        _sessionPids.Add(rootPid);
-        Processes[rootPid] = new ProcessRecord(
+        var root = new ProcessRecord(
             rootPid,
             0,
             Path.GetFileName(target),
             target,
             string.IsNullOrWhiteSpace(arguments) ? target : $"{target} {arguments}",
-            DateTimeOffset.Now,
+            null,
             DateTimeOffset.Now,
             DateTimeOffset.Now);
+        AddSessionRecord(root);
     }
 
     public ConcurrentDictionary<int, ProcessRecord> Processes { get; } = new();
@@ -42,18 +43,16 @@ internal sealed class ProcessSampler
         }
     }
 
-    public void Observe(ProcessRecord record)
+    public bool Observe(ProcessRecord record)
     {
         lock (_lock)
         {
-            if (record.ProcessId == _rootPid || _sessionPids.Contains(record.ParentProcessId))
+            if (record.ProcessId == _rootPid || CanAdoptChild(record, currentProcessesByPid: null))
             {
-                _sessionPids.Add(record.ProcessId);
-                Processes.AddOrUpdate(
-                    record.ProcessId,
-                    _ => record,
-                    (_, existing) => MergeRecord(existing, record));
+                return AddSessionRecord(record);
             }
+
+            return false;
         }
     }
 
@@ -67,16 +66,60 @@ internal sealed class ProcessSampler
 
     public void Sample()
     {
-        foreach (var observed in WmiProcess.ReadAll())
+        SampleFrom(WmiProcess.ReadAll().Select(process => process.ToRecord()));
+    }
+
+    internal void SampleFrom(IEnumerable<ProcessRecord> records)
+    {
+        var snapshot = records
+            .GroupBy(record => record.ProcessId)
+            .Select(group => group.OrderByDescending(record => record.CreationDate ?? DateTimeOffset.MinValue).First())
+            .ToDictionary(record => record.ProcessId);
+
+        lock (_lock)
         {
-            Observe(observed.ToRecord());
+            PruneReusedSessionPids(snapshot);
+
+            if (snapshot.TryGetValue(_rootPid, out var root))
+            {
+                AddSessionRecord(root);
+            }
+
+            var changed = true;
+            while (changed)
+            {
+                changed = false;
+                foreach (var record in snapshot.Values)
+                {
+                    if (_sessionPids.Contains(record.ProcessId))
+                    {
+                        if (IsSameProcessInstance(_activeSessionProcesses[record.ProcessId], record))
+                        {
+                            AddSessionRecord(record);
+                        }
+
+                        continue;
+                    }
+
+                    if (CanAdoptChild(record, snapshot))
+                    {
+                        changed |= AddSessionRecord(record);
+                    }
+                }
+            }
         }
     }
 
     public int CountActiveSessionProcesses()
     {
         var active = 0;
-        foreach (var pid in _sessionPids.ToArray())
+        int[] sessionPids;
+        lock (_lock)
+        {
+            sessionPids = _sessionPids.ToArray();
+        }
+
+        foreach (var pid in sessionPids)
         {
             try
             {
@@ -110,6 +153,91 @@ internal sealed class ProcessSampler
             FirstSeen = existing.FirstSeen <= incoming.FirstSeen ? existing.FirstSeen : incoming.FirstSeen,
             LastSeen = existing.LastSeen >= incoming.LastSeen ? existing.LastSeen : incoming.LastSeen
         };
+
+    private bool AddSessionRecord(ProcessRecord record)
+    {
+        if (_activeSessionProcesses.TryGetValue(record.ProcessId, out var active)
+            && !IsSameProcessInstance(active, record))
+        {
+            return false;
+        }
+
+        _sessionPids.Add(record.ProcessId);
+        _activeSessionProcesses[record.ProcessId] = _activeSessionProcesses.TryGetValue(record.ProcessId, out active)
+            ? MergeRecord(active, record)
+            : record;
+
+        Processes.AddOrUpdate(
+            record.ProcessId,
+            _ => record,
+            (_, existing) => IsSameProcessInstance(existing, record) ? MergeRecord(existing, record) : existing);
+
+        return true;
+    }
+
+    private bool CanAdoptChild(ProcessRecord record, IReadOnlyDictionary<int, ProcessRecord>? currentProcessesByPid)
+    {
+        if (!_sessionPids.Contains(record.ParentProcessId))
+        {
+            return false;
+        }
+
+        if (!_activeSessionProcesses.TryGetValue(record.ParentProcessId, out var knownParent))
+        {
+            return false;
+        }
+
+        if (currentProcessesByPid is not null
+            && currentProcessesByPid.TryGetValue(record.ParentProcessId, out var currentParent)
+            && !IsSameProcessInstance(knownParent, currentParent))
+        {
+            return false;
+        }
+
+        if (knownParent.CreationDate is not null
+            && record.CreationDate is not null
+            && record.CreationDate.Value < knownParent.CreationDate.Value.AddSeconds(-2))
+        {
+            return false;
+        }
+
+        return !_activeSessionProcesses.TryGetValue(record.ProcessId, out var active)
+            || IsSameProcessInstance(active, record);
+    }
+
+    private void PruneReusedSessionPids(IReadOnlyDictionary<int, ProcessRecord> currentProcessesByPid)
+    {
+        foreach (var pid in _sessionPids.ToArray())
+        {
+            if (pid == _rootPid)
+            {
+                continue;
+            }
+
+            if (!_activeSessionProcesses.TryGetValue(pid, out var active)
+                || !currentProcessesByPid.TryGetValue(pid, out var current))
+            {
+                continue;
+            }
+
+            if (!IsSameProcessInstance(active, current))
+            {
+                _sessionPids.Remove(pid);
+                _activeSessionProcesses.Remove(pid);
+            }
+        }
+    }
+
+    private static bool IsSameProcessInstance(ProcessRecord existing, ProcessRecord incoming)
+    {
+        if (existing.CreationDate is null || incoming.CreationDate is null)
+        {
+            return true;
+        }
+
+        return existing.ProcessId == incoming.ProcessId
+            && existing.CreationDate.Value.Equals(incoming.CreationDate.Value);
+    }
 }
 
 internal sealed record WmiProcess(

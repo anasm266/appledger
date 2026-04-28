@@ -46,6 +46,7 @@ Implemented:
 - byte totals are labeled as known bytes because live ETW events often lack size deltas
 - process identity snapshots attached to file and network events for attribution
 - attribution confidence and reason attached to file/network events
+- active process-tree membership prunes stale reused PIDs before ETW/network filtering
 - large-session controls: `--no-reads`, `--max-events`, `--no-sqlite`
 - path filters are applied before event caps so excluded churn does not consume the session budget
 - fixture-driven tests for normalization and summary logic
@@ -69,6 +70,7 @@ Recent Phase 1 fixes:
 - reports show active include/exclude filters in capture settings
 - process identity fields added across JSON, CSV, SQLite, and HTML report output
 - attribution quality summary added to reports
+- process-tree membership hardened against PID reuse false positives
 - running app picker added for friendlier `record codex --watch .` style workflows
 - app-specific AI profiles added on top of the generic `ai-code` defaults
 - automatic report opening added with `--no-open` escape hatch
@@ -88,7 +90,7 @@ and grouped process activity.
 Still rough or incomplete:
 
 - some file create attribution still relies on normalization instead of perfect live ETW creates
-- PID reuse is not fully solved yet; event attribution now carries PID plus process identity fields and confidence levels, but live collector membership should move further toward process-instance keys
+- process attribution is much stronger than the initial PID-only version, but long-session edge cases still need more real-world validation
 - hostname correlation is opportunistic, not guaranteed for every endpoint
 - command parsing is pragmatic, not exhaustive
 - registry coverage is narrow
@@ -169,7 +171,7 @@ Build:
 - service detection
 - protocol handler and file association detection
 - USN journal fallback for missed file changes
-- more reliable process attribution with PID plus start-time semantics
+- deeper process-instance history for long sessions and exited/reused processes
 
 This is where AppLedger stops being "useful CLI prototype" and becomes a technically serious Windows introspection tool.
 

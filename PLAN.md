@@ -31,6 +31,7 @@ Working now:
 - report-visible include/exclude filters
 - process identity snapshots on file/network events for stronger attribution
 - attribution confidence and reason in JSON, CSV, SQLite, and HTML reports
+- active process-tree membership guarded against PID reuse before ETW/network sync
 - HTML / JSON / CSV / SQLite outputs
 - AI-oriented report sections
 - test project with passing normalization and summary fixtures
@@ -54,6 +55,8 @@ Tune first-class profile behavior for:
 - VS Code
 
 Keep this refactor-friendly: if the analyzer grows while tuning app-specific behavior, split `Analysis/Analyzers.cs` into profile-specific files instead of letting it become the new monolith.
+
+Use the hardened process tree as the baseline: profile tuning should not reintroduce broad PID-only matching, and suspicious unrelated processes in reports should be treated as attribution bugs until proven otherwise.
 
 The generic entry point is now:
 

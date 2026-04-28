@@ -89,6 +89,14 @@ internal sealed class EtwCollector : IDisposable
 
     public void SyncSessionProcesses(IReadOnlySet<int> processIds)
     {
+        foreach (var pid in _sessionPids.Keys)
+        {
+            if (!processIds.Contains(pid))
+            {
+                _sessionPids.TryRemove(pid, out _);
+            }
+        }
+
         foreach (var pid in processIds)
         {
             _sessionPids[pid] = 0;
@@ -136,11 +144,15 @@ internal sealed class EtwCollector : IDisposable
                 data.TimeStamp,
                 data.TimeStamp);
 
-            if (_sessionPids.ContainsKey(data.ParentID))
+            if (_processSampler?.Observe(record) == true)
             {
                 _sessionPids[data.ProcessID] = 0;
                 _processes[data.ProcessID] = record;
-                _processSampler?.Observe(record);
+            }
+            else if (_processSampler is null && _sessionPids.ContainsKey(data.ParentID))
+            {
+                _sessionPids[data.ProcessID] = 0;
+                _processes[data.ProcessID] = record;
             }
         };
 

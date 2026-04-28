@@ -35,6 +35,7 @@ Current Phase 1 capabilities:
 - show capture settings in reports so disabled categories such as file reads are explicit
 - attach process identity snapshots to file and network events for stronger attribution
 - show attribution confidence and reason for file/network events
+- reject stale process-tree members when Windows reuses a PID, so unrelated apps are less likely to be pulled into a session
 - keep the CLI implementation split by collector, filesystem, analysis, output, and report responsibilities
 - persist sessions as JSON and SQLite
 - regenerate reports from `session.json` or `session.sqlite`
@@ -104,6 +105,8 @@ When ETW is unavailable, AppLedger still records a useful session by:
 - polling the process tree with WMI
 - snapshotting watched roots before and after the session
 - diffing the filesystem state afterward
+
+Process-tree membership is guarded with process identity checks. AppLedger keeps active session PIDs tied to creation-time-backed process instances, prunes stale PIDs when Windows reuses them, and mirrors that trusted active set into ETW filtering. This prevents unrelated apps from being attributed to a recording just because a helper PID was reused later.
 
 The report also normalizes some raw event noise into something closer to user intent. For example, a file that was clearly created during the session and then written to is reported as a created file instead of a split `snapshot created` plus `ETW modified` story.
 
@@ -341,6 +344,7 @@ Recent Phase 1 progress:
 - report wording now distinguishes watched-root changes from source/project files and labels byte totals as known bytes
 - process identity fields added to JSON, CSV, SQLite, and HTML report views for file/network attribution
 - attribution confidence summary added to the HTML report
+- process-tree membership now prunes stale reused PIDs before syncing ETW/network filters
 
 ## Roadmap
 

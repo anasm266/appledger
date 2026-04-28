@@ -9,6 +9,8 @@ Working now:
 - launched-app recording
 - attach to running apps
 - friendly `record` command for the default flow
+- automatic `report.html` opening after recordings
+- `--no-open` for scripted runs
 - `apps --running` grouped picker for already-running apps
 - `--profile ai-code` preset for AI coding sessions
 - app-specific profiles for Codex, Claude, Cursor, and VS Code
@@ -62,13 +64,14 @@ appledger apps --running codex
 appledger attach codex --profile ai-code
 ```
 
-### 2. Open Report Automatically
+### 2. Report First-Screen Polish
 
 Build:
 
-- open `report.html` after a successful `record`, `run`, or `attach`
-- add `--no-open`
-- keep `report` regeneration quiet unless an open flag is added later
+- sharper top-level "what happened" phrasing
+- better ordering of risk, project changes, commands, and sensitive access
+- fewer raw tables above the fold
+- a cleaner screenshot-ready first viewport
 
 ### 3. Better Risk Observations
 

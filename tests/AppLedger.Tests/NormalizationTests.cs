@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Diagnostics;
 using AppLedger;
 using Xunit;
 
@@ -14,6 +15,7 @@ public sealed class NormalizationTests
         Assert.NotNull(options);
         Assert.True(options.WatchAll);
         Assert.False(options.CaptureReads);
+        Assert.True(options.OpenReport);
         Assert.Equal(50_000, options.MaxEvents);
         Assert.Contains(Path.GetFullPath(Directory.GetCurrentDirectory()), options.WatchRoots);
         Assert.Contains("node_modules", options.PathFilter.Excludes);
@@ -31,6 +33,25 @@ public sealed class NormalizationTests
         Assert.False(options.CaptureReads);
         Assert.Contains("OpenAI\\Codex\\Cache", options.PathFilter.Excludes);
         Assert.Contains("node_repl\\node_modules", options.PathFilter.Excludes);
+    }
+
+    [Fact]
+    public void RunOptions_NoOpen_DisablesAutomaticReportLaunch()
+    {
+        var options = RunOptions.Parse(["notepad", "--profile", "none", "--no-open"]);
+
+        Assert.NotNull(options);
+        Assert.False(options.OpenReport);
+    }
+
+    [Fact]
+    public void AttachOptions_NoOpen_DisablesAutomaticReportLaunch()
+    {
+        var process = Process.GetCurrentProcess();
+        var options = AttachOptions.Parse([process.Id.ToString(CultureInfo.InvariantCulture), "--profile", "none", "--no-open"]);
+
+        Assert.NotNull(options);
+        Assert.False(options.OpenReport);
     }
 
     [Fact]

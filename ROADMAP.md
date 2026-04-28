@@ -20,6 +20,8 @@ Implemented:
 - `record` as the friendly default command that attaches when possible and launches otherwise
 - `run` to launch and record an app
 - `attach` to record an already-running process tree
+- automatic `report.html` opening after `record`, `run`, and `attach`
+- `--no-open` for scripted or terminal-only recordings
 - `--profile ai-code` to choose sensible AI coding session defaults
 - app-specific profiles: `codex`, `claude`, `cursor`, and `vscode`
 - `record` automatically infers those profiles from the target app when `--profile` is omitted
@@ -67,6 +69,7 @@ Recent Phase 1 fixes:
 - attribution quality summary added to reports
 - running app picker added for friendlier `record codex --watch .` style workflows
 - app-specific AI profiles added on top of the generic `ai-code` defaults
+- automatic report opening added with `--no-open` escape hatch
 
 Current proof point:
 
@@ -118,16 +121,16 @@ Sensitive paths touched: .env
 Shells spawned: PowerShell
 ```
 
-### 2. Open Report Automatically
+### 2. Report First-Screen Polish
 
-Goal: make the default workflow feel finished after recording stops.
+Goal: make the first report viewport explain the session faster.
 
 Build:
 
-- open `report.html` after successful recording
-- add `--no-open` for scripts and CI-style runs
-- print a short "open report" fallback path if browser launch fails
-- keep `report` regeneration non-invasive unless explicitly asked to open
+- sharper top-level "what happened" phrasing
+- clearer distinction between project changes, cache churn, and tool/runtime noise
+- stronger visual ordering for risky observations
+- fewer raw tables above the fold
 
 ### 3. Better Risk Observations
 

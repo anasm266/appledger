@@ -2,4 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/AppLedger.Cli/AppLedger.Cli.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AppLedger.Tests/AppLedger.Tests.csproj" />
+  </Folder>
 </Solution>

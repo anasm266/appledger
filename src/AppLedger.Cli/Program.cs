@@ -75,7 +75,7 @@ internal static class Program
         var registryBefore = RegistrySnapshot.Capture();
 
         using var stop = new CancellationTokenSource();
-        using var etwCollector = EtwCollector.TryStart(options.WatchRoots, options.WatchAll);
+        using var etwCollector = EtwCollector.TryStart(options.WatchRoots, options.WatchAll, options.CaptureReads, options.MaxEvents);
         if (etwCollector.IsRunning)
         {
             Console.WriteLine("ETW:       live kernel file/process capture enabled");
@@ -125,6 +125,12 @@ internal static class Program
             etwCollector.SyncSessionProcesses(processSampler.SessionProcessIds);
             networkSampler.Sample(processSampler.SessionProcessIds);
 
+            if (etwCollector.HasReachedEventLimit)
+            {
+                Console.WriteLine($"Reached event limit ({options.MaxEvents:N0}). Stopping recording...");
+                break;
+            }
+
             var activeCount = processSampler.CountActiveSessionProcesses();
             if (activeCount == 0)
             {
@@ -166,9 +172,12 @@ internal static class Program
             registryEvents);
 
         var outputs = (await SessionOutputs.WriteAsync(session, options.OutputDirectory, JsonOptions)).ToList();
-        var sqlitePath = Path.Combine(options.OutputDirectory, "session.sqlite");
-        SessionStore.Write(sqlitePath, session);
-        outputs.Add(sqlitePath);
+        if (options.WriteSqlite)
+        {
+            var sqlitePath = Path.Combine(options.OutputDirectory, "session.sqlite");
+            SessionStore.Write(sqlitePath, session);
+            outputs.Add(sqlitePath);
+        }
 
         Console.WriteLine();
         Console.WriteLine($"AppLedger Report: {Path.GetFileNameWithoutExtension(options.Target)}");
@@ -213,7 +222,7 @@ internal static class Program
         var registryBefore = RegistrySnapshot.Capture();
 
         using var stop = new CancellationTokenSource();
-        using var etwCollector = EtwCollector.TryStart(options.WatchRoots, options.WatchAll);
+        using var etwCollector = EtwCollector.TryStart(options.WatchRoots, options.WatchAll, options.CaptureReads, options.MaxEvents);
         if (etwCollector.IsRunning)
         {
             Console.WriteLine("ETW:       live kernel file/process capture enabled");
@@ -253,6 +262,12 @@ internal static class Program
             processSampler.Sample();
             etwCollector.SyncSessionProcesses(processSampler.SessionProcessIds);
             networkSampler.Sample(processSampler.SessionProcessIds);
+
+            if (etwCollector.HasReachedEventLimit)
+            {
+                Console.WriteLine($"Reached event limit ({options.MaxEvents:N0}). Stopping recording...");
+                break;
+            }
 
             var activeCount = processSampler.CountActiveSessionProcesses();
             if (activeCount == 0)
@@ -295,9 +310,12 @@ internal static class Program
             registryEvents);
 
         var outputs = (await SessionOutputs.WriteAsync(session, options.OutputDirectory, JsonOptions)).ToList();
-        var sqlitePath = Path.Combine(options.OutputDirectory, "session.sqlite");
-        SessionStore.Write(sqlitePath, session);
-        outputs.Add(sqlitePath);
+        if (options.WriteSqlite)
+        {
+            var sqlitePath = Path.Combine(options.OutputDirectory, "session.sqlite");
+            SessionStore.Write(sqlitePath, session);
+            outputs.Add(sqlitePath);
+        }
 
         Console.WriteLine();
         Console.WriteLine($"AppLedger Report: {options.Root.Name} ({options.Root.ProcessId})");
@@ -393,9 +411,12 @@ internal static class Program
         output = Path.GetFullPath(Environment.ExpandEnvironmentVariables(output));
 
         var outputs = (await SessionOutputs.WriteAsync(session, output, JsonOptions)).ToList();
-        var sqlitePath = Path.Combine(output, "session.sqlite");
-        SessionStore.Write(sqlitePath, session);
-        outputs.Add(sqlitePath);
+        if (!Cli.HasFlag(args, "--no-sqlite"))
+        {
+            var sqlitePath = Path.Combine(output, "session.sqlite");
+            SessionStore.Write(sqlitePath, session);
+            outputs.Add(sqlitePath);
+        }
         Console.WriteLine("Generated:");
         foreach (var path in outputs)
         {
@@ -470,9 +491,9 @@ internal static class Program
         Usage:
           appledger apps [search]
           appledger ps [search]
-          appledger run <app name|alias|exe> [--args "<arguments>"] [--watch <path>] [--watch-all] [--out <dir>] [--timeout <seconds>]
-          appledger attach <pid|process search> [--watch <path>] [--watch-all] [--out <dir>] [--timeout <seconds>]
-          appledger report <session.json|session.sqlite> [--out <dir>]
+          appledger run <app name|alias|exe> [--args "<arguments>"] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
+          appledger attach <pid|process search> [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
+          appledger report <session.json|session.sqlite> [--out <dir>] [--no-sqlite]
           appledger snapshot <output.json> --watch <path>
           appledger diff <before.json> <after.json>
 
@@ -482,6 +503,7 @@ internal static class Program
           appledger ps codex
           appledger attach 20376 --watch "C:\Users\Anas\Documents\New project 8" --out artifacts\codex-self --timeout 300
           appledger attach 20376 --watch-all --out artifacts\codex-full
+          appledger attach 20376 --watch-all --no-reads --max-events 50000 --out artifacts\codex-full
           appledger run "C:\Windows\System32\notepad.exe" --watch "%USERPROFILE%\Documents"
           appledger run "C:\Path\To\Code.exe" --watch "C:\Users\Anas\Projects\demo-app"
 
@@ -499,13 +521,16 @@ internal sealed record RunOptions(
     string OutputDirectory,
     IReadOnlyList<string> WatchRoots,
     bool WatchAll,
+    bool CaptureReads,
+    int? MaxEvents,
+    bool WriteSqlite,
     TimeSpan? Timeout)
 {
     public static RunOptions? Parse(string[] args)
     {
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("Usage: appledger run <app name|alias|exe> [--args \"...\"] [--watch <path>] [--watch-all] [--out <dir>]");
+            Console.Error.WriteLine("Usage: appledger run <app name|alias|exe> [--args \"...\"] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>]");
             return null;
         }
 
@@ -531,6 +556,9 @@ internal sealed record RunOptions(
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         var watchAll = Cli.HasFlag(args, "--watch-all");
+        var captureReads = !Cli.HasFlag(args, "--no-reads");
+        var writeSqlite = !Cli.HasFlag(args, "--no-sqlite");
+        var maxEvents = Cli.GetPositiveIntOption(args, "--max-events");
 
         if (watchRoots.Count == 0 && !watchAll)
         {
@@ -555,6 +583,9 @@ internal sealed record RunOptions(
             output,
             watchRoots,
             watchAll,
+            captureReads,
+            maxEvents,
+            writeSqlite,
             timeout);
     }
 }
@@ -564,13 +595,16 @@ internal sealed record AttachOptions(
     string OutputDirectory,
     IReadOnlyList<string> WatchRoots,
     bool WatchAll,
+    bool CaptureReads,
+    int? MaxEvents,
+    bool WriteSqlite,
     TimeSpan? Timeout)
 {
     public static AttachOptions? Parse(string[] args)
     {
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("Usage: appledger attach <pid|process search> [--watch <path>] [--watch-all] [--out <dir>] [--timeout <seconds>]");
+            Console.Error.WriteLine("Usage: appledger attach <pid|process search> [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]");
             return null;
         }
 
@@ -595,6 +629,9 @@ internal sealed record AttachOptions(
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         var watchAll = Cli.HasFlag(args, "--watch-all");
+        var captureReads = !Cli.HasFlag(args, "--no-reads");
+        var writeSqlite = !Cli.HasFlag(args, "--no-sqlite");
+        var maxEvents = Cli.GetPositiveIntOption(args, "--max-events");
 
         if (watchRoots.Count == 0 && !watchAll)
         {
@@ -612,7 +649,7 @@ internal sealed record AttachOptions(
             timeout = TimeSpan.FromSeconds(timeoutSeconds);
         }
 
-        return new AttachOptions(root, output, watchRoots, watchAll, timeout);
+        return new AttachOptions(root, output, watchRoots, watchAll, captureReads, maxEvents, writeSqlite, timeout);
     }
 }
 
@@ -645,6 +682,14 @@ internal static class Cli
 
     public static bool HasFlag(IReadOnlyList<string> args, string name) =>
         args.Any(arg => string.Equals(arg, name, StringComparison.OrdinalIgnoreCase));
+
+    public static int? GetPositiveIntOption(IReadOnlyList<string> args, string name)
+    {
+        var value = GetOption(args, name);
+        return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) && parsed > 0
+            ? parsed
+            : null;
+    }
 }
 
 internal sealed record FileSnapshot(
@@ -1244,6 +1289,8 @@ internal sealed class EtwCollector : IDisposable
 {
     private readonly IReadOnlyList<string> _watchRoots;
     private readonly bool _watchAll;
+    private readonly bool _captureReads;
+    private readonly int? _maxEvents;
     private readonly ConcurrentDictionary<int, byte> _sessionPids = new();
     private readonly ConcurrentDictionary<int, ProcessRecord> _processes = new();
     private readonly ConcurrentQueue<FileEvent> _fileEvents = new();
@@ -1253,11 +1300,14 @@ internal sealed class EtwCollector : IDisposable
     private Task? _processingTask;
     private ProcessSampler? _processSampler;
     private volatile bool _disposed;
+    private int _eventCount;
 
-    private EtwCollector(IReadOnlyList<string> watchRoots, bool watchAll, TraceEventSession? session, Task? processingTask, string? status)
+    private EtwCollector(IReadOnlyList<string> watchRoots, bool watchAll, bool captureReads, int? maxEvents, TraceEventSession? session, Task? processingTask, string? status)
     {
         _watchRoots = watchRoots;
         _watchAll = watchAll;
+        _captureReads = captureReads;
+        _maxEvents = maxEvents;
         _session = session;
         _processingTask = processingTask;
         Status = status;
@@ -1271,17 +1321,19 @@ internal sealed class EtwCollector : IDisposable
 
     public IReadOnlyList<ProcessRecord> Processes => _processes.Values.ToArray();
 
-    public static EtwCollector TryStart(IReadOnlyList<string> watchRoots, bool watchAll)
+    public bool HasReachedEventLimit => _maxEvents is not null && Volatile.Read(ref _eventCount) >= _maxEvents.Value;
+
+    public static EtwCollector TryStart(IReadOnlyList<string> watchRoots, bool watchAll, bool captureReads, int? maxEvents)
     {
         if (TraceEventSession.IsElevated() != true)
         {
-            return new EtwCollector(watchRoots, watchAll, null, null, "run from an elevated terminal for live ETW file events");
+            return new EtwCollector(watchRoots, watchAll, captureReads, maxEvents, null, null, "run from an elevated terminal for live ETW file events");
         }
 
         try
         {
             var session = new TraceEventSession(KernelTraceEventParser.KernelSessionName) { StopOnDispose = true };
-            var collector = new EtwCollector(watchRoots, watchAll, session, null, null);
+            var collector = new EtwCollector(watchRoots, watchAll, captureReads, maxEvents, session, null, null);
             session.EnableKernelProvider(
                 KernelTraceEventParser.Keywords.Process
                 | KernelTraceEventParser.Keywords.FileIO
@@ -1304,7 +1356,7 @@ internal sealed class EtwCollector : IDisposable
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or InvalidOperationException or COMException)
         {
-            return new EtwCollector(watchRoots, watchAll, null, null, ex.Message);
+            return new EtwCollector(watchRoots, watchAll, captureReads, maxEvents, null, null, ex.Message);
         }
     }
 
@@ -1375,7 +1427,10 @@ internal sealed class EtwCollector : IDisposable
         session.Source.Kernel.FileIOName += HandleFileName;
         session.Source.Kernel.FileIOFileCreate += HandleFileName;
         session.Source.Kernel.FileIOCreate += HandleFileCreate;
-        session.Source.Kernel.FileIORead += data => AddFile(FileEventKind.Read, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
+        if (_captureReads)
+        {
+            session.Source.Kernel.FileIORead += data => AddFile(FileEventKind.Read, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
+        }
         session.Source.Kernel.FileIOWrite += data => AddFile(FileEventKind.Modified, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
         session.Source.Kernel.FileIOFileDelete += data => AddFile(FileEventKind.Deleted, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
         session.Source.Kernel.FileIODelete += data => AddFile(FileEventKind.Deleted, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
@@ -1477,7 +1532,13 @@ internal sealed class EtwCollector : IDisposable
             return;
         }
 
+        if (HasReachedEventLimit)
+        {
+            return;
+        }
+
         _fileEvents.Enqueue(FileEvent.Live(kind, path, processId, processName, relatedPath) with { ObservedAt = timestamp });
+        Interlocked.Increment(ref _eventCount);
     }
 
     private bool ShouldTrackProcess(int processId)

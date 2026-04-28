@@ -11,6 +11,8 @@ Working now:
 - friendly `record` command for the default flow
 - `apps --running` grouped picker for already-running apps
 - `--profile ai-code` preset for AI coding sessions
+- app-specific profiles for Codex, Claude, Cursor, and VS Code
+- automatic profile inference in `record`
 - multi-use `--include` / `--exclude` path filters for live events and snapshots
 - process-name recording resolves to the root matching process tree
 - process-name recording deprioritizes AppLedger/dotnet command-line self matches
@@ -38,34 +40,35 @@ Verified against real sessions:
 
 ## Next Execution Order
 
-### 1. Smarter AI Session Profiles
+### 1. Tune AI Session Profiles
 
-Build first-class summaries for:
+Tune first-class profile behavior for:
 
 - Codex
 - Claude
 - Cursor
 - VS Code
 
-Keep this refactor-friendly: if the analyzer grows while adding app-specific profiles, split `Analysis/Analyzers.cs` into profile-specific files instead of letting it become the new monolith.
+Keep this refactor-friendly: if the analyzer grows while tuning app-specific behavior, split `Analysis/Analyzers.cs` into profile-specific files instead of letting it become the new monolith.
 
 The generic entry point is now:
 
 ```powershell
 appledger record codex --watch .
+appledger record claude --watch .
+appledger record cursor --watch .
+appledger record code --watch .
 appledger apps --running codex
 appledger attach codex --profile ai-code
 ```
 
-### 2. App-Specific Filter Presets
+### 2. Open Report Automatically
 
 Build:
 
-- Codex-specific filter defaults
-- Claude-specific filter defaults
-- Cursor-specific filter defaults
-- VS Code-specific filter defaults
-- clearer distinction between preset filters and user-supplied filters
+- open `report.html` after a successful `record`, `run`, or `attach`
+- add `--no-open`
+- keep `report` regeneration quiet unless an open flag is added later
 
 ### 3. Better Risk Observations
 

@@ -21,6 +21,8 @@ Implemented:
 - `run` to launch and record an app
 - `attach` to record an already-running process tree
 - `--profile ai-code` to choose sensible AI coding session defaults
+- app-specific profiles: `codex`, `claude`, `cursor`, and `vscode`
+- `record` automatically infers those profiles from the target app when `--profile` is omitted
 - multi-use `--include` / `--exclude` path filters for live ETW events and snapshot diffs
 - `--watch-all` to record whole-app live file activity
 - `report` to regenerate artifacts from `session.json` or `session.sqlite`
@@ -64,6 +66,7 @@ Recent Phase 1 fixes:
 - process identity fields added across JSON, CSV, SQLite, and HTML report output
 - attribution quality summary added to reports
 - running app picker added for friendlier `record codex --watch .` style workflows
+- app-specific AI profiles added on top of the generic `ai-code` defaults
 
 Current proof point:
 
@@ -83,8 +86,7 @@ Still rough or incomplete:
 - hostname correlation is opportunistic, not guaranteed for every endpoint
 - command parsing is pragmatic, not exhaustive
 - registry coverage is narrow
-- only one profile exists today: `ai-code`
-- include/exclude filtering is implemented, but app-specific filter presets still need tuning against Cursor, VS Code, Codex, and Claude
+- app-specific filter presets exist, but they still need tuning against longer real Codex, Claude, Cursor, and VS Code sessions
 - large sessions still need test coverage and tuning
 - no desktop UI yet
 - `Analysis/Analyzers.cs` is still the largest file and can be split further once AI profiles mature
@@ -95,13 +97,13 @@ These are product polish and fidelity gaps, not viability gaps. The tool is alre
 
 Immediate next work should stay focused on making AI desktop app sessions more opinionated and easier to scan.
 
-### 1. Smarter AI Session Profiles
+### 1. Tune AI Session Profiles Against Real Runs
 
 Goal: make Codex/Cursor/VS Code/Claude sessions the strongest demo.
 
 Build:
 
-- app-specific profiles beyond the generic `ai-code` profile
+- tune Codex/Claude/Cursor/VS Code filter presets from real reports
 - better grouping of project files vs cache/temp/internal repo files
 - command grouping by high-level action
 - improved sensitive path reporting
@@ -116,17 +118,16 @@ Sensitive paths touched: .env
 Shells spawned: PowerShell
 ```
 
-### 2. App-Specific Filter Presets
+### 2. Open Report Automatically
 
-Goal: let whole-app mode stay broad without being noisy for each major AI/editor app.
+Goal: make the default workflow feel finished after recording stops.
 
 Build:
 
-- Codex-specific excludes
-- Claude-specific excludes
-- Cursor-specific excludes
-- VS Code-specific excludes
-- report grouping that explains what was filtered by preset vs user flags
+- open `report.html` after successful recording
+- add `--no-open` for scripts and CI-style runs
+- print a short "open report" fallback path if browser launch fails
+- keep `report` regeneration non-invasive unless explicitly asked to open
 
 ### 3. Better Risk Observations
 

@@ -21,6 +21,33 @@ public sealed class NormalizationTests
     }
 
     [Fact]
+    public void RunOptions_DefaultProfileName_AppliesAppSpecificProfile()
+    {
+        var options = RunOptions.Parse(["notepad"], defaultProfileName: "codex");
+
+        Assert.NotNull(options);
+        Assert.Equal("codex", options.ProfileName);
+        Assert.True(options.WatchAll);
+        Assert.False(options.CaptureReads);
+        Assert.Contains("OpenAI\\Codex\\Cache", options.PathFilter.Excludes);
+        Assert.Contains("node_repl\\node_modules", options.PathFilter.Excludes);
+    }
+
+    [Fact]
+    public void RecordingProfile_InferName_DetectsCommonAiApps()
+    {
+        var codex = new ProcessRecord(1, 0, "Codex.exe", @"C:\Program Files\WindowsApps\OpenAI.Codex\app\Codex.exe", "Codex.exe", At(1), At(1), At(2));
+        var claude = new ProcessRecord(2, 0, "claude.exe", @"C:\Program Files\WindowsApps\Claude\app\Claude.exe", "claude.exe", At(1), At(1), At(2));
+        var cursor = new ProcessRecord(3, 0, "Cursor.exe", @"C:\Users\Anas\AppData\Local\Programs\Cursor\Cursor.exe", "Cursor.exe", At(1), At(1), At(2));
+
+        Assert.Equal("codex", RecordingProfile.InferName("codex", codex));
+        Assert.Equal("claude", RecordingProfile.InferName("claude", claude));
+        Assert.Equal("cursor", RecordingProfile.InferName("cursor", cursor));
+        Assert.Equal("vscode", RecordingProfile.InferName("code", null));
+        Assert.Equal("ai-code", RecordingProfile.InferName("unknown-editor", null));
+    }
+
+    [Fact]
     public void RunOptions_ParsesIncludeAndExcludePathFilters()
     {
         var options = RunOptions.Parse(["notepad", "--profile", "none", "--include", "src", "--exclude", "node_modules", "--exclude", ".git\\objects"]);

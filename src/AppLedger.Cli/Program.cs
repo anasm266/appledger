@@ -380,6 +380,7 @@ internal static class Program
         {
             return Fail($"Could not read session: {input}");
         }
+        session = session with { AiActivity = AiCodingAnalyzer.Build(session.WatchRoots, session.FileEvents, session.Processes) };
 
         var output = Cli.GetOption(args, "--out")
             ?? Path.Combine(Path.GetDirectoryName(input) ?? Directory.GetCurrentDirectory(), "regenerated-report");
@@ -1863,6 +1864,7 @@ internal sealed record AiCodingActivity(
     CommandSummary Commands,
     IReadOnlyList<CommandActivity> DeveloperCommands,
     IReadOnlyList<SensitiveAccess> SensitiveAccesses,
+    IReadOnlyList<ProcessGroupSummary> ProcessGroups,
     IReadOnlyList<ProcessTimelineItem> ProcessTimeline);
 
 internal sealed record ProjectChangeSummary(int Created, int Modified, int Deleted, int Renamed, int TotalChanged);
@@ -1871,9 +1873,11 @@ internal sealed record ProjectFileChange(FileEventKind Kind, string Path, string
 
 internal sealed record CommandSummary(int Total, int PackageInstalls, int GitCommands, int TestCommands, int ShellCommands, int ScriptCommands);
 
-internal sealed record CommandActivity(string Kind, int ProcessId, int ParentProcessId, string ProcessName, string CommandLine, DateTimeOffset FirstSeen);
+internal sealed record CommandActivity(string Kind, int ProcessId, int ParentProcessId, string ProcessName, string CommandLine, DateTimeOffset FirstSeen, int Occurrences);
 
 internal sealed record SensitiveAccess(FileEventKind Kind, string Path, string RelativePath, string Source, int? ProcessId, string? ProcessName, DateTimeOffset ObservedAt);
+
+internal sealed record ProcessGroupSummary(string Name, int Count, int WithCommandLine, DateTimeOffset FirstSeen, DateTimeOffset LastSeen);
 
 internal sealed record ProcessTimelineItem(int ProcessId, int ParentProcessId, string Name, string? CommandLine, DateTimeOffset FirstSeen, DateTimeOffset LastSeen, double DurationSeconds);
 
@@ -1978,15 +1982,27 @@ internal static class AiCodingAnalyzer
             changedProjectFiles.Count(file => file.Kind == FileEventKind.Renamed),
             changedProjectFiles.Select(file => Normalize(file.Path)).Distinct(StringComparer.OrdinalIgnoreCase).Count());
 
-        var developerCommands = processes
+        var rawDeveloperCommands = processes
             .Where(process => !string.IsNullOrWhiteSpace(process.CommandLine))
             .SelectMany(ClassifyCommands)
             .OrderBy(command => command.FirstSeen)
             .ThenBy(command => command.Kind, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+        var developerCommands = rawDeveloperCommands
+            .Where(command => !IsLowSignalCommand(command))
+            .GroupBy(command => $"{command.Kind}|{CommandFingerprint(command.CommandLine)}", StringComparer.OrdinalIgnoreCase)
+            .Select(group =>
+            {
+                var first = group.OrderBy(command => command.FirstSeen).First();
+                return first with { Occurrences = group.Count() };
+            })
+            .OrderBy(command => command.FirstSeen)
+            .ThenBy(command => command.Kind, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
         var commandSummary = new CommandSummary(
-            processes.Count(process => !string.IsNullOrWhiteSpace(process.CommandLine)),
+            developerCommands.Count,
             developerCommands.Count(command => command.Kind == "package-install"),
             developerCommands.Count(command => command.Kind == "git"),
             developerCommands.Count(command => command.Kind == "test"),
@@ -2009,17 +2025,32 @@ internal static class AiCodingAnalyzer
             .Take(50)
             .ToList();
 
+        var processGroups = processes
+            .GroupBy(process => NormalizeProcessName(process.Name), StringComparer.OrdinalIgnoreCase)
+            .Select(group => new ProcessGroupSummary(
+                group.Key,
+                group.Count(),
+                group.Count(process => !string.IsNullOrWhiteSpace(process.CommandLine)),
+                group.Min(process => process.FirstSeen),
+                group.Max(process => process.LastSeen)))
+            .OrderByDescending(group => group.Count)
+            .ThenBy(group => group.Name, StringComparer.OrdinalIgnoreCase)
+            .Take(40)
+            .ToList();
+
         var processTimeline = processes
+            .Where(IsTimelineProcess)
             .OrderBy(process => process.FirstSeen)
             .ThenBy(process => process.ProcessId)
             .Select(process => new ProcessTimelineItem(
                 process.ProcessId,
                 process.ParentProcessId,
                 process.Name,
-                process.CommandLine,
+                SanitizeCommandLine(process.CommandLine),
                 process.FirstSeen,
                 process.LastSeen,
                 Math.Max(0, (process.LastSeen - process.FirstSeen).TotalSeconds)))
+            .Take(100)
             .ToList();
 
         return new AiCodingActivity(
@@ -2028,6 +2059,7 @@ internal static class AiCodingAnalyzer
             commandSummary,
             developerCommands.Take(100).ToList(),
             sensitiveAccesses,
+            processGroups,
             processTimeline);
     }
 
@@ -2057,7 +2089,7 @@ internal static class AiCodingAnalyzer
         var kinds = new List<string>();
 
         if (IsPackageInstall(command)) kinds.Add("package-install");
-        if (ContainsCommand(command, name, "git")) kinds.Add("git");
+        if (IsGitCommand(command, name)) kinds.Add("git");
         if (IsTestCommand(command)) kinds.Add("test");
         if (IsScriptCommand(command)) kinds.Add("script");
         if (IsShell(name, command)) kinds.Add("shell");
@@ -2069,8 +2101,9 @@ internal static class AiCodingAnalyzer
                 process.ProcessId,
                 process.ParentProcessId,
                 process.Name,
-                process.CommandLine ?? process.Name,
-                process.FirstSeen);
+                SanitizeCommandLine(process.CommandLine) ?? process.Name,
+                process.FirstSeen,
+                1);
         }
     }
 
@@ -2115,10 +2148,105 @@ internal static class AiCodingAnalyzer
         || name.Equals("cmd.exe", StringComparison.OrdinalIgnoreCase)
         || command.Contains("ExecutionPolicy", StringComparison.OrdinalIgnoreCase);
 
-    private static bool ContainsCommand(string command, string processName, string executable) =>
-        processName.Equals(executable + ".exe", StringComparison.OrdinalIgnoreCase)
-        || command.Contains(executable + " ", StringComparison.OrdinalIgnoreCase)
-        || command.EndsWith(executable, StringComparison.OrdinalIgnoreCase);
+    private static bool IsGitCommand(string command, string processName)
+    {
+        if (command.Contains("credential-manager", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("remote-https", StringComparison.OrdinalIgnoreCase)
+            || processName.Contains("credential-manager", StringComparison.OrdinalIgnoreCase)
+            || processName.Equals("git-remote-https.exe", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("git-remote-https", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return processName.Equals("git.exe", StringComparison.OrdinalIgnoreCase)
+            || command.StartsWith("git ", StringComparison.OrdinalIgnoreCase)
+            || command.StartsWith("\"git\" ", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("\\git.exe\"", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("\\git.exe ", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLowSignalCommand(CommandActivity command)
+    {
+        var name = NormalizeProcessName(command.ProcessName);
+        var line = command.CommandLine;
+
+        if (name is "conhost" or "git-credential-manager" or "git-remote-https")
+        {
+            return true;
+        }
+
+        return line.Contains("git credential-manager", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("git-remote-https", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("git remote-https", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("Win32_Process | Select-Object", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("Long-lived PowerShell AST parser", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsTimelineProcess(ProcessRecord process)
+    {
+        var name = NormalizeProcessName(process.Name);
+        if (name is "conhost" or "git-credential-manager" or "git-remote-https")
+        {
+            return false;
+        }
+
+        var command = process.CommandLine ?? "";
+        if (command.Contains("credential-manager", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("git-remote-https", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("git remote-https", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("Win32_Process | Select-Object", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return process.ParentProcessId == 0
+            || !string.IsNullOrWhiteSpace(process.CommandLine)
+            || name is "codex" or "code" or "cursor" or "node" or "node_repl" or "git" or "powershell" or "pwsh" or "cmd" or "dotnet" or "python" or "npm" or "pnpm";
+    }
+
+    private static string NormalizeProcessName(string name)
+    {
+        var file = Path.GetFileNameWithoutExtension(name);
+        return string.IsNullOrWhiteSpace(file) ? name : file;
+    }
+
+    private static string CommandFingerprint(string command)
+    {
+        var normalized = command
+            .Replace("\"", "", StringComparison.Ordinal)
+            .Replace("C:\\Program Files\\Git\\cmd\\git.exe", "git", StringComparison.OrdinalIgnoreCase)
+            .Replace("C:\\Program Files\\Git\\mingw64\\bin\\git.exe", "git", StringComparison.OrdinalIgnoreCase)
+            .Replace("C:/Program Files/Git/mingw64/libexec/git-core\\git.exe", "git", StringComparison.OrdinalIgnoreCase)
+            .Replace("C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "powershell", StringComparison.OrdinalIgnoreCase)
+            .Replace("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "powershell", StringComparison.OrdinalIgnoreCase);
+
+        return string.Join(" ", normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
+
+    private static string? SanitizeCommandLine(string? command)
+    {
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            return command;
+        }
+
+        var compact = command
+            .Replace("\"C:\\Program Files\\Git\\cmd\\git.exe\"", "git", StringComparison.OrdinalIgnoreCase)
+            .Replace("\"C:\\Program Files\\Git\\mingw64\\bin\\git.exe\"", "git", StringComparison.OrdinalIgnoreCase)
+            .Replace("\"C:/Program Files/Git/mingw64/libexec/git-core\\git.exe\"", "git", StringComparison.OrdinalIgnoreCase)
+            .Replace("\"C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\"", "powershell", StringComparison.OrdinalIgnoreCase)
+            .Replace("\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\"", "powershell", StringComparison.OrdinalIgnoreCase)
+            .Replace("git.exe ", "git ", StringComparison.OrdinalIgnoreCase);
+
+        var encodedIndex = compact.IndexOf("-EncodedCommand", StringComparison.OrdinalIgnoreCase);
+        if (encodedIndex >= 0)
+        {
+            return compact[..encodedIndex].Trim() + " -EncodedCommand <base64>";
+        }
+
+        return compact.Length <= 320 ? compact : compact[..317] + "...";
+    }
 
     private static int SourceRank(string source) => source.Equals("etw", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
 
@@ -2151,6 +2279,7 @@ internal static class SessionOutputs
     public static async Task<IReadOnlyList<string>> WriteAsync(SessionReport session, string outputDirectory, JsonSerializerOptions jsonOptions)
     {
         Directory.CreateDirectory(outputDirectory);
+        session = session with { AiActivity = AiCodingAnalyzer.Build(session.WatchRoots, session.FileEvents, session.Processes) };
 
         var jsonPath = Path.Combine(outputDirectory, "session.json");
         var htmlPath = Path.Combine(outputDirectory, "report.html");
@@ -2311,9 +2440,9 @@ internal static class HtmlReport
 {
     public static string Render(SessionReport session)
     {
-        var ai = session.AiActivity ?? AiCodingAnalyzer.Build(session.WatchRoots, session.FileEvents, session.Processes);
+        var ai = AiCodingAnalyzer.Build(session.WatchRoots, session.FileEvents, session.Processes);
         var appName = WebUtility.HtmlEncode(Path.GetFileName(session.App));
-        var rows = string.Join(Environment.NewLine, session.FileEvents.Take(200).Select(RenderFileRow));
+        var rows = string.Join(Environment.NewLine, VisibleFileEvents(session.FileEvents).Select(RenderFileRow));
         var processes = string.Join(Environment.NewLine, session.Processes.Select(p => $"<tr><td>{p.ProcessId}</td><td>{Esc(p.Name)}</td><td>{Esc(p.CommandLine ?? "")}</td></tr>"));
         var network = string.Join(Environment.NewLine, session.NetworkEvents.Take(200).Select(n => $"<tr><td>{n.ProcessId}</td><td>{Esc(n.RemoteAddress)}:{n.RemotePort}</td><td>{Esc(n.State)}</td></tr>"));
         var findings = string.Join(Environment.NewLine, session.Findings.Select(f => $"<li class=\"{Esc(f.Severity)}\"><strong>{Esc(f.Severity.ToUpperInvariant())}</strong> {Esc(f.Title)}<br><span>{Esc(f.Detail)}</span></li>"));
@@ -2321,6 +2450,7 @@ internal static class HtmlReport
         var projectFiles = string.Join(Environment.NewLine, ai.ChangedProjectFiles.Select(RenderProjectFileRow));
         var commands = string.Join(Environment.NewLine, ai.DeveloperCommands.Select(RenderCommandRow));
         var sensitive = string.Join(Environment.NewLine, ai.SensitiveAccesses.Select(RenderSensitiveRow));
+        var processGroups = string.Join(Environment.NewLine, ai.ProcessGroups.Select(RenderProcessGroupRow));
         var timeline = string.Join(Environment.NewLine, ai.ProcessTimeline.Select(RenderTimelineRow));
 
         return $$"""
@@ -2387,6 +2517,7 @@ internal static class HtmlReport
                 <div class="metric"><strong>{{ai.Commands.GitCommands:N0}}</strong><span>git commands</span></div>
                 <div class="metric"><strong>{{ai.Commands.TestCommands:N0}}</strong><span>test commands</span></div>
                 <div class="metric"><strong>{{ai.SensitiveAccesses.Count:N0}}</strong><span>sensitive accesses</span></div>
+                <div class="metric"><strong>{{ai.ProcessGroups.Count:N0}}</strong><span>process groups</span></div>
               </div>
             </section>
 
@@ -2397,7 +2528,7 @@ internal static class HtmlReport
 
             <section>
               <h2>Developer Commands</h2>
-              {{(ai.DeveloperCommands.Count == 0 ? "<p class=\"muted\">No package, git, test, shell, or script commands detected.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Kind</th><th>PID</th><th>Process</th><th>Command</th></tr></thead><tbody>{commands}</tbody></table></div>")}}
+              {{(ai.DeveloperCommands.Count == 0 ? "<p class=\"muted\">No package, git, test, shell, or script commands detected.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Kind</th><th>Seen</th><th>First PID</th><th>Process</th><th>Command</th></tr></thead><tbody>{commands}</tbody></table></div>")}}
             </section>
 
             <section>
@@ -2406,7 +2537,12 @@ internal static class HtmlReport
             </section>
 
             <section>
-              <h2>Process Timeline</h2>
+              <h2>Process Summary</h2>
+              <div class="panel"><table><thead><tr><th>Process</th><th>Seen</th><th>With command</th><th>First seen</th><th>Last seen</th></tr></thead><tbody>{{processGroups}}</tbody></table></div>
+            </section>
+
+            <section>
+              <h2>Signal Process Timeline</h2>
               <div class="panel"><table><thead><tr><th>First Seen</th><th>PID</th><th>Parent</th><th>Name</th><th>Duration</th><th>Command</th></tr></thead><tbody>{{timeline}}</tbody></table></div>
             </section>
 
@@ -2417,6 +2553,7 @@ internal static class HtmlReport
 
             <section>
               <h2>Files</h2>
+              <p class="muted">This table prioritizes writes, sensitive reads, and a deduplicated sample of other reads. Raw events remain in JSON, CSV, and SQLite exports.</p>
               <div class="panel"><table><thead><tr><th>Action</th><th>Source</th><th>PID</th><th>Category</th><th>Delta</th><th>Path</th></tr></thead><tbody>{{rows}}</tbody></table></div>
             </section>
 
@@ -2444,13 +2581,59 @@ internal static class HtmlReport
         $"<tr><td>{Esc(file.Kind.ToString())}</td><td>{Esc(file.Source)}</td><td>{Esc(file.Category)}</td><td><code>{Esc(file.RelativePath)}</code></td></tr>";
 
     private static string RenderCommandRow(CommandActivity command) =>
-        $"<tr><td><span class=\"tag\">{Esc(command.Kind)}</span></td><td>{command.ProcessId}</td><td>{Esc(command.ProcessName)}</td><td><code>{Esc(command.CommandLine)}</code></td></tr>";
+        $"<tr><td><span class=\"tag\">{Esc(command.Kind)}</span></td><td>{command.Occurrences:N0}</td><td>{command.ProcessId}</td><td>{Esc(command.ProcessName)}</td><td><code>{Esc(command.CommandLine)}</code></td></tr>";
 
     private static string RenderSensitiveRow(SensitiveAccess access) =>
         $"<tr><td>{Esc(access.Kind.ToString())}</td><td>{Esc(access.Source)}</td><td>{Esc(access.ProcessId?.ToString(CultureInfo.InvariantCulture) ?? "")}</td><td>{Esc(access.ProcessName ?? "")}</td><td><code>{Esc(access.RelativePath)}</code></td></tr>";
 
+    private static string RenderProcessGroupRow(ProcessGroupSummary group) =>
+        $"<tr><td>{Esc(group.Name)}</td><td>{group.Count:N0}</td><td>{group.WithCommandLine:N0}</td><td>{Esc(group.FirstSeen.ToString("T", CultureInfo.InvariantCulture))}</td><td>{Esc(group.LastSeen.ToString("T", CultureInfo.InvariantCulture))}</td></tr>";
+
     private static string RenderTimelineRow(ProcessTimelineItem item) =>
         $"<tr><td>{Esc(item.FirstSeen.ToString("T", CultureInfo.InvariantCulture))}</td><td>{item.ProcessId}</td><td>{item.ParentProcessId}</td><td>{Esc(item.Name)}</td><td>{item.DurationSeconds:0.0}s</td><td><code>{Esc(item.CommandLine ?? "")}</code></td></tr>";
+
+    private static IEnumerable<FileEvent> VisibleFileEvents(IReadOnlyList<FileEvent> events)
+    {
+        var writes = events
+            .Where(file => file.Kind is FileEventKind.Created or FileEventKind.Modified or FileEventKind.Deleted or FileEventKind.Renamed)
+            .OrderBy(file => file.ObservedAt)
+            .Take(120);
+
+        var sensitiveReads = events
+            .Where(file => file.Kind == FileEventKind.Read && file.IsSensitive)
+            .GroupBy(file => NormalizeVisiblePath(file.Path), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderBy(file => file.ObservedAt).First())
+            .Take(40);
+
+        var readSample = events
+            .Where(file => file.Kind == FileEventKind.Read && !file.IsSensitive && !IsBoringRead(file.Path))
+            .GroupBy(file => $"{NormalizeVisiblePath(file.Path)}|{file.ProcessName}", StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderBy(file => file.ObservedAt).First())
+            .Take(80);
+
+        return writes.Concat(sensitiveReads).Concat(readSample).Take(200);
+    }
+
+    private static bool IsBoringRead(string path)
+    {
+        var normalized = path.Replace('/', '\\');
+        return normalized.Contains("\\.git\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\node_modules\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\bin\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\obj\\", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeVisiblePath(string path)
+    {
+        try
+        {
+            return Path.GetFullPath(path).TrimEnd('\\');
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return path;
+        }
+    }
 
     private static string Esc(string value) => WebUtility.HtmlEncode(value);
 }

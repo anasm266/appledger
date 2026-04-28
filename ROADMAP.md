@@ -18,11 +18,13 @@ Implemented:
 - `ps` to search running processes
 - `run` to launch and record an app
 - `attach` to record an already-running process tree
+- `--watch-all` to record whole-app live file activity
 - `report` to regenerate artifacts from `session.json` or `session.sqlite`
 - `snapshot` and `diff` for manual before/after workflows
 - ETW live process and file capture when run elevated
 - WMI process-tree polling fallback
 - sampled IPv4 TCP endpoint capture
+- cached DNS / reverse lookup hostname enrichment for network output
 - startup `Run` / `RunOnce` registry monitoring
 - HTML, JSON, CSV, SQLite, AI activity, and cleanup outputs
 
@@ -33,68 +35,110 @@ Recent Phase 1 fixes:
 - sensitive finding dedupe
 - created-file lifecycle normalization for report/session output
 - cleaner AI coding summaries with lower command/process noise
+- `.git` and system-runtime noise grouped out of the main report tables
+- rename destination synthesis in regenerated reports
+- full-app recording validated against Codex and Claude sessions
 
 Current proof point:
 
 ```txt
-Record Codex Desktop or Cursor against a watched repo.
-AppLedger shows project file changes, shell and git commands, sensitive file access,
-rename/delete activity, sampled endpoints, and grouped process activity.
+Record Codex Desktop, Claude Desktop, or another Electron app.
+AppLedger shows app-data churn, project file changes when a watch root is provided,
+shell and git commands, sensitive file access, rename/delete activity, sampled endpoints,
+and grouped process activity.
 ```
 
 ## Current Gaps
 
 Still rough or incomplete:
 
-- rename destination synthesis is partial
 - some file create attribution still relies on normalization instead of perfect live ETW creates
-- network output is IP/port only, not DNS/domain aware
+- hostname correlation is opportunistic, not guaranteed for every endpoint
 - command parsing is pragmatic, not exhaustive
 - registry coverage is narrow
+- full-app mode opens with giant counters instead of a strong human summary
+- large sessions need better capture controls
 - no desktop UI yet
 
 These are product polish and fidelity gaps, not viability gaps. The tool is already demonstrable.
 
 ## Next Up
 
-Immediate next work should stay focused on making the report stronger for AI coding sessions.
+Immediate next work should stay focused on making whole-app sessions readable and controllable.
 
-### 1. File Event Fidelity
+### 1. Full-App Summary Layer
 
-Goal: make file lifecycle reporting feel exact.
+Goal: make `--watch-all` reports useful on the first screen.
 
 Build:
 
-- synthesize rename destination-side outcomes
-- reduce duplicate ETW read noise further
-- improve create vs modify attribution for short-lived files
-- add confidence labels where attribution is reconstructed
+- top-level grouping for:
+  - app data / cache
+  - temp churn
+  - project files
+  - git metadata
+  - system/runtime noise
+  - sensitive paths
+  - network destinations
+- better summary language for common AI desktop app sessions
 
 Success looks like:
 
 ```txt
-Created: 3
-Modified: 1
-Deleted: 1
-Renamed: 1
+Codex mostly updated temp/cache state, read .gitconfig, ran git commands,
+and contacted GitHub.
 ```
 
-with those numbers matching what a user believes happened.
+### 2. Large-Session Controls
 
-### 2. Smarter AI Session Report
+Goal: keep whole-app mode practical.
 
-Goal: make Codex/Cursor/VS Code sessions the strongest demo.
+Build:
+
+- `--no-reads`
+- `--no-sqlite`
+- `--max-events <n>`
+- optional include/exclude path filters
+
+Success looks like:
+
+```txt
+Record Codex or Claude for several minutes without drowning the report
+in low-value reads or forcing every export format.
+```
+
+### 3. Normalization Tests
+
+Goal: harden the lifecycle/report logic that now matters to the product.
+
+Build:
+
+- fixture-driven tests for:
+  - create then modify
+  - create then delete
+  - rename old/new path
+  - snapshot + ETW merge
+  - `.git` suppression
+  - runtime-noise suppression
+
+### 4. Better Network Grouping
+
+Goal: move from "endpoints exist" to "this app talked to these services."
+
+Build:
+
+- group endpoints by hostname and process
+- cleaner network summary cards
+- better unresolved-IP fallback presentation
+
+### 5. Smarter AI Session Report
+
+Goal: make Codex/Cursor/VS Code/Claude sessions the strongest demo.
 
 Build:
 
 - better grouping of project files vs cache/temp/internal repo files
-- command grouping by high-level action:
-  - git
-  - test
-  - package install
-  - shell
-  - script
-- better suppression of helper-process noise
+- command grouping by high-level action
 - improved sensitive path reporting
 - cleaner process summary / process tree presentation
 
@@ -107,30 +151,7 @@ Sensitive paths touched: .env
 Shells spawned: PowerShell
 ```
 
-instead of a long process dump.
-
-### 3. Network Context
-
-Goal: move from IPs to understandable destinations.
-
-Build:
-
-- DNS correlation where possible
-- endpoint grouping by process
-- better "big picture" network summary in HTML report
-
-Success looks like:
-
-```txt
-Connected to:
-- github.com
-- registry.npmjs.org
-- api.openai.com
-```
-
-instead of only raw IP addresses.
-
-### 4. Better Risk Observations
+### 6. Better Risk Observations
 
 Goal: make the top of the report feel opinionated.
 
@@ -170,7 +191,7 @@ This is where AppLedger stops being "useful CLI prototype" and becomes a technic
 
 ## Phase 3
 
-Goal: make the report the star magnet.
+Goal: make the report the star magnet and the CLI comfortable to use.
 
 Build:
 
@@ -180,6 +201,7 @@ Build:
 - more opinionated cleanup guidance
 - better export ergonomics
 - release-ready single binary packaging
+- lightweight local UI once collector/report behavior is stable
 
 The rule for this phase:
 
@@ -188,21 +210,6 @@ Open report.html and understand the session in under 30 seconds.
 ```
 
 ## Phase 4
-
-Goal: desktop UI.
-
-Build:
-
-- app picker
-- watch-folder picker
-- start / stop recording
-- recent sessions
-- report viewer
-- export buttons
-
-This should come after the collector and report are stable enough that a UI is not hiding unstable behavior.
-
-## Phase 5
 
 Goal: differentiators that make AppLedger more than a readable recorder.
 

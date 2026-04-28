@@ -1,220 +1,245 @@
 # AppLedger Roadmap
 
-AppLedger should become a Windows black box recorder that explains what an app did during a session: files, folders, registry, commands, network, cache, and cleanup.
-
-The product should not feel like a ProcMon clone. ProcMon shows events. AppLedger should explain a session.
-
-## What Works Now
-
-The current v0 is a CLI prototype.
-
-It can:
-
-- launch an app under recording
-- resolve easy app names like `code`, `cursor`, `chrome`, and `notepad`
-- search recordable apps with `appledger apps [search]`
-- list running processes with `appledger ps [search]`
-- attach to an already-running process tree with `appledger attach <pid|process search>`
-- use ETW for live process and file events when run elevated
-- track the launched process and longer-lived child processes through WMI polling
-- capture command lines for observed processes
-- sample IPv4 TCP network endpoints by process ID
-- snapshot watched folders before and after a session
-- detect files created, modified, and deleted in watched folders
-- capture file reads and renames when ETW is available
-- classify paths as app data, temp, documents, downloads, sensitive, project/user files, and similar buckets
-- detect common startup registry key changes
-- persist sessions as JSON and SQLite
-- regenerate reports from `session.json` or `session.sqlite`
-- generate `report.html`, `session.json`, `session.sqlite`, `touched-files.csv`, `commands.json`, `ai-activity.json`, and `cleanup.ps1`
-- render AI coding sections for project file changes, developer commands, sensitive access, and process timeline
-
-Example:
-
-```powershell
-dotnet run --project src\AppLedger.Cli -- apps code
-dotnet run --project src\AppLedger.Cli -- run code --watch "C:\Users\Anas\Projects\demo-app"
-```
-
-Manual diff mode also works:
-
-```powershell
-dotnet run --project src\AppLedger.Cli -- snapshot before.json --watch "."
-dotnet run --project src\AppLedger.Cli -- snapshot after.json --watch "."
-dotnet run --project src\AppLedger.Cli -- diff before.json after.json
-```
-
-## Current Limits
-
-The main limitation is still fidelity in non-elevated mode. Live ETW file events require elevation, so AppLedger falls back to before/after snapshots when it cannot start a kernel trace session.
-
-The current version does not yet capture:
-
-- DNS/domain names
-- network byte counts
-- packet contents
-- broad registry diffs
-- scheduled tasks
-- services
-- protocol handlers
-- blocking or guard mode
-- desktop UI
-- SQLite storage
-- minifilter driver-level data
-
-## Phase 1: Credible CLI MVP
-
-Goal: make AppLedger genuinely useful for AI coding app sessions.
-
-Status: in progress. The first ETW, SQLite, and report regeneration path is implemented.
-
-Remaining:
-
-- reliable process-tree attribution using PID plus process start time
-- richer JSON schema
-- higher precision command parsing for compound shell commands
-- focused AI coding report sections for package installs, tests, git commands, sensitive locations, and process timeline are implemented and should be refined against real AI-app sessions
-
-Target demo:
+AppLedger should become a Windows black box recorder that answers one question clearly:
 
 ```txt
-I recorded Cursor editing a repo.
-AppLedger shows files changed, commands run, package installs, network endpoints, and risky activity.
+What did this app actually do during this session?
 ```
 
-## Phase 2: Strong Windows Observability
+The product is not a raw event viewer. The differentiator is interpretation: per-session summary, risk observations, project-aware grouping, and cleanup guidance.
 
-Goal: make the collector technically serious.
+## Where It Is Now
+
+Current state: credible CLI MVP.
+
+Implemented:
+
+- `apps` to discover recordable apps
+- `ps` to search running processes
+- `run` to launch and record an app
+- `attach` to record an already-running process tree
+- `report` to regenerate artifacts from `session.json` or `session.sqlite`
+- `snapshot` and `diff` for manual before/after workflows
+- ETW live process and file capture when run elevated
+- WMI process-tree polling fallback
+- sampled IPv4 TCP endpoint capture
+- startup `Run` / `RunOnce` registry monitoring
+- HTML, JSON, CSV, SQLite, AI activity, and cleanup outputs
+
+Recent Phase 1 fixes:
+
+- attach-mode ETW process-tree sync for already-running apps
+- delete and rename attribution working in elevated mode
+- sensitive finding dedupe
+- created-file lifecycle normalization for report/session output
+- cleaner AI coding summaries with lower command/process noise
+
+Current proof point:
+
+```txt
+Record Codex Desktop or Cursor against a watched repo.
+AppLedger shows project file changes, shell and git commands, sensitive file access,
+rename/delete activity, sampled endpoints, and grouped process activity.
+```
+
+## Current Gaps
+
+Still rough or incomplete:
+
+- rename destination synthesis is partial
+- some file create attribution still relies on normalization instead of perfect live ETW creates
+- network output is IP/port only, not DNS/domain aware
+- command parsing is pragmatic, not exhaustive
+- registry coverage is narrow
+- no desktop UI yet
+
+These are product polish and fidelity gaps, not viability gaps. The tool is already demonstrable.
+
+## Next Up
+
+Immediate next work should stay focused on making the report stronger for AI coding sessions.
+
+### 1. File Event Fidelity
+
+Goal: make file lifecycle reporting feel exact.
 
 Build:
 
-- DNS event correlation so reports show domains, not just IPs
-- registry snapshot/diff for high-value locations
-- startup and persistence detection:
-  - Run keys
-  - scheduled tasks
-  - services
-  - protocol handlers
-  - file associations
-- USN journal fallback for missed file changes
-- top folder growth by byte delta
-- improved cleanup planner
-- elevated mode detection
-- event confidence labels
+- synthesize rename destination-side outcomes
+- reduce duplicate ETW read noise further
+- improve create vs modify attribution for short-lived files
+- add confidence labels where attribution is reconstructed
 
-Target demo:
+Success looks like:
 
 ```txt
-This app added startup persistence, wrote 600 MB of cache, spawned PowerShell, and connected to these domains.
+Created: 3
+Modified: 1
+Deleted: 1
+Renamed: 1
 ```
 
-## Phase 3: Star-Worthy Report
+with those numbers matching what a user believes happened.
 
-Goal: make the report the feature people remember.
+### 2. Smarter AI Session Report
+
+Goal: make Codex/Cursor/VS Code sessions the strongest demo.
 
 Build:
 
-- polished HTML report
-- session summary cards
-- risk score
-- top changed folders
-- timeline view
-- process tree view
-- developer actions section
-- privacy-sensitive access section
-- cleanup section with conservative guidance
-- `appledger report <session>` command
-- single-file executable release
+- better grouping of project files vs cache/temp/internal repo files
+- command grouping by high-level action:
+  - git
+  - test
+  - package install
+  - shell
+  - script
+- better suppression of helper-process noise
+- improved sensitive path reporting
+- cleaner process summary / process tree presentation
 
-The report should open with the answer, not the raw log:
+Success looks like:
+
+```txt
+Changed project files: 6
+Commands run: 9
+Sensitive paths touched: .env
+Shells spawned: PowerShell
+```
+
+instead of a long process dump.
+
+### 3. Network Context
+
+Goal: move from IPs to understandable destinations.
+
+Build:
+
+- DNS correlation where possible
+- endpoint grouping by process
+- better "big picture" network summary in HTML report
+
+Success looks like:
+
+```txt
+Connected to:
+- github.com
+- registry.npmjs.org
+- api.openai.com
+```
+
+instead of only raw IP addresses.
+
+### 4. Better Risk Observations
+
+Goal: make the top of the report feel opinionated.
+
+Build:
+
+- persistence-oriented registry detections beyond current keys
+- startup/persistence summary section
+- higher-signal sensitive access findings
+- shell spawn and package install findings tuned for AI sessions
+- cache growth / temp growth thresholds
+
+Success looks like the first screen answering:
 
 ```txt
 Big picture:
-- Edited 17 project files
-- Ran 12 commands
-- Installed 2 packages
-- Read .env
-- Connected to api.openai.com, github.com, registry.npmjs.org
-- Added no startup items
+- touched 8 project files
+- read .env
+- spawned PowerShell
+- ran 6 git commands
+- added no startup persistence
 ```
 
-## Phase 4: Desktop App
+## Phase 2
 
-Goal: make AppLedger usable without a terminal.
+Goal: strong Windows observability beyond the MVP.
 
 Build:
 
-- Tauri, WPF, or WinUI frontend
+- broader registry snapshot/diff for high-value locations
+- scheduled task detection
+- service detection
+- protocol handler and file association detection
+- USN journal fallback for missed file changes
+- more reliable process attribution with PID plus start-time semantics
+
+This is where AppLedger stops being "useful CLI prototype" and becomes a technically serious Windows introspection tool.
+
+## Phase 3
+
+Goal: make the report the star magnet.
+
+Build:
+
+- sharper HTML report structure
+- better top-level summary cards
+- stronger process-tree and timeline sections
+- more opinionated cleanup guidance
+- better export ergonomics
+- release-ready single binary packaging
+
+The rule for this phase:
+
+```txt
+Open report.html and understand the session in under 30 seconds.
+```
+
+## Phase 4
+
+Goal: desktop UI.
+
+Build:
+
 - app picker
-- project/folder picker
-- start/stop recording
-- live session timer
+- watch-folder picker
+- start / stop recording
 - recent sessions
 - report viewer
 - export buttons
-- cleanup draft viewer
 
-Target workflow:
+This should come after the collector and report are stable enough that a UI is not hiding unstable behavior.
 
-```txt
-Choose app -> choose folder -> Start Recording -> Stop -> See report
-```
+## Phase 5
 
-## Phase 5: Advanced Differentiators
-
-Goal: make AppLedger more than a readable log viewer.
+Goal: differentiators that make AppLedger more than a readable recorder.
 
 Build:
 
-- AI Agent Activity mode
-- before/after uninstall report
-- extension install detection
-- baseline comparison between sessions
-- optional elevated collector service
-- signed binary
-- optional persistent background collector
-- optional minifilter driver for highest-fidelity file monitoring
-- later guard mode:
-  - warn on sensitive file reads
-  - warn on shell execution
-  - warn on persistence changes
+- AI agent mode tuned specifically for desktop coding tools
+- uninstall / leftover analysis
+- session comparison
+- optional background collector service
+- optional higher-fidelity driver-backed mode later
+- optional guard mode later
 
-Guard mode should come later. v0 should observe only.
+Guard mode is explicitly later. Observation first.
 
 ## End State
 
-By the end, AppLedger should answer:
+By the end, AppLedger should be able to tell a user:
 
 ```txt
-What did this Windows app actually do to my computer?
+This app edited these files, created this cache, ran these commands, connected to
+these destinations, touched these sensitive paths, added or did not add persistence,
+and left behind these cleanup opportunities.
 ```
 
-It should show:
-
-- files read, created, modified, renamed, and deleted
-- folders and cache growth
-- child processes and exact commands
-- registry changes
-- startup and persistence changes
-- scheduled tasks, services, protocol handlers, and file associations
-- network domains, IPs, and ports
-- sensitive file access
-- cleanup opportunities
-- human-readable risk observations
-
-The strongest final demo is an AI coding session:
+Best final demo:
 
 ```txt
-Record Cursor or Codex Desktop editing a repo.
+Record Codex Desktop editing a repo.
 
 AppLedger shows:
-- 17 project files modified
-- 4 files created
-- 1 package installed
-- 12 commands run
-- .env read
-- PowerShell spawned
-- registry unchanged
-- network calls to api.openai.com, github.com, registry.npmjs.org
-- cleanup available: 240 MB cache
+- project files changed
+- package installs
+- tests run
+- git commands
+- shell spawns
+- .env access
+- network destinations
+- startup registry unchanged
+- cleanup available
 ```

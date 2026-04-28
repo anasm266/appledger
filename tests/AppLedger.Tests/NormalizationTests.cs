@@ -204,6 +204,51 @@ public sealed class NormalizationTests
     }
 
     [Fact]
+    public void SessionReport_AttachesProcessIdentityToFileAndNetworkEvents()
+    {
+        var process = new ProcessRecord(
+            123,
+            45,
+            "codex.exe",
+            @"C:\Program Files\Codex\codex.exe",
+            "codex run task",
+            At(66),
+            At(66),
+            At(70));
+        var file = Live(FileEventKind.Modified, @"C:\Users\Anas\Documents\repo\file.txt", observedAt: At(67), processId: 123, processName: "codex.exe");
+        var network = new NetworkEvent(123, "127.0.0.1", 50000, "140.82.112.3", 443, "Established", At(68), "github.com");
+
+        var session = SessionReport.Build(
+            @"C:\Program Files\Codex\codex.exe",
+            "",
+            At(66),
+            At(70),
+            [],
+            true,
+            EmptySnapshot(),
+            EmptySnapshot(),
+            [file],
+            [process],
+            [network],
+            []);
+
+        var enrichedFile = Assert.Single(session.FileEvents);
+        Assert.NotNull(enrichedFile.Process);
+        Assert.Equal(123, enrichedFile.Process.Pid);
+        Assert.Equal(45, enrichedFile.Process.ParentPid);
+        Assert.Equal(At(66), enrichedFile.Process.CreationTime);
+        Assert.Equal(process.ExecutablePath, enrichedFile.Process.ExePath);
+        Assert.Equal(process.CommandLineHash, enrichedFile.Process.CommandLineHash);
+        Assert.Equal(At(66), enrichedFile.Process.FirstSeen);
+        Assert.Equal(At(70), enrichedFile.Process.LastSeen);
+
+        var enrichedNetwork = Assert.Single(session.NetworkEvents);
+        Assert.NotNull(enrichedNetwork.Process);
+        Assert.Equal(123, enrichedNetwork.Process.Pid);
+        Assert.Equal(process.CommandLineHash, enrichedNetwork.Process.CommandLineHash);
+    }
+
+    [Fact]
     public void NetworkSummaryAnalyzer_GroupsByResolvedHostAndProcess()
     {
         var processes = new List<ProcessRecord>
@@ -321,6 +366,9 @@ public sealed class NormalizationTests
         {
             ObservedAt = observedAt
         };
+
+    private static FileSnapshot EmptySnapshot() =>
+        new(At(0), [], [], []);
 
     private static DateTimeOffset At(int second) =>
         new DateTimeOffset(2026, 4, 27, 12, 0, 0, TimeSpan.Zero).AddSeconds(second);

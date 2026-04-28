@@ -186,6 +186,22 @@ internal sealed record RecordingProfile(
     IReadOnlyList<string> IncludeFilters,
     IReadOnlyList<string> ExcludeFilters)
 {
+    private static readonly string[] CommonAiCodeExcludes =
+    [
+        "node_modules",
+        ".git\\objects",
+        ".git\\logs",
+        "artifacts",
+        "appledger-runs",
+        "GPUCache",
+        "Code Cache",
+        "Cache_Data",
+        "DawnCache",
+        "ShaderCache",
+        "GrShaderCache",
+        "Crashpad"
+    ];
+
     public static readonly RecordingProfile None = new(
         "none",
         WatchAll: false,
@@ -204,17 +220,50 @@ internal sealed record RecordingProfile(
         IncludeCurrentDirectorySnapshot: true,
         IncludeTempSnapshot: false,
         IncludeFilters: [],
-        ExcludeFilters:
-        [
-            "node_modules",
-            ".git\\objects",
-            ".git\\logs",
-            "artifacts",
-            "appledger-runs",
-            "GPUCache",
-            "Code Cache",
-            "Cache_Data"
-        ]);
+        ExcludeFilters: CommonAiCodeExcludes);
+
+    public static readonly RecordingProfile Codex = AiCode with
+    {
+        Name = "codex",
+        ExcludeFilters = CommonAiCodeExcludes.Concat([
+            "OpenAI\\Codex\\logs",
+            "OpenAI\\Codex\\Cache",
+            "node_repl\\node_modules"
+        ]).ToArray()
+    };
+
+    public static readonly RecordingProfile Claude = AiCode with
+    {
+        Name = "claude",
+        ExcludeFilters = CommonAiCodeExcludes.Concat([
+            "Claude\\logs",
+            "Claude\\Cache",
+            "Claude\\Code Cache",
+            "Claude\\GPUCache"
+        ]).ToArray()
+    };
+
+    public static readonly RecordingProfile Cursor = AiCode with
+    {
+        Name = "cursor",
+        ExcludeFilters = CommonAiCodeExcludes.Concat([
+            "Cursor\\CachedData",
+            "Cursor\\CachedExtensionVSIXs",
+            "Cursor\\CachedProfilesData",
+            "Cursor\\logs"
+        ]).ToArray()
+    };
+
+    public static readonly RecordingProfile VsCode = AiCode with
+    {
+        Name = "vscode",
+        ExcludeFilters = CommonAiCodeExcludes.Concat([
+            "Code\\CachedData",
+            "Code\\CachedExtensionVSIXs",
+            "Code\\CachedProfilesData",
+            "Code\\logs"
+        ]).ToArray()
+    };
 
     public static RecordingProfile? Resolve(string? name)
     {
@@ -227,14 +276,40 @@ internal sealed record RecordingProfile(
         {
             "none" => None,
             "ai-code" or "ai" or "coding" => AiCode,
+            "codex" or "openai-codex" => Codex,
+            "claude" or "claude-desktop" => Claude,
+            "cursor" => Cursor,
+            "vscode" or "vs-code" or "code" => VsCode,
             _ => Unknown(name)
         };
+    }
+
+    public static string InferName(string target, ProcessRecord? process = null)
+    {
+        var haystack = string.Join(
+            " ",
+            target,
+            process?.Name,
+            process?.ExecutablePath,
+            process?.CommandLine);
+
+        if (haystack.Contains("codex", StringComparison.OrdinalIgnoreCase)) return Codex.Name;
+        if (haystack.Contains("claude", StringComparison.OrdinalIgnoreCase)) return Claude.Name;
+        if (haystack.Contains("cursor", StringComparison.OrdinalIgnoreCase)) return Cursor.Name;
+        if (haystack.Contains("Microsoft VS Code", StringComparison.OrdinalIgnoreCase)
+            || haystack.Contains("\\Code.exe", StringComparison.OrdinalIgnoreCase)
+            || haystack.Contains("Code.exe", StringComparison.OrdinalIgnoreCase)
+            || target.Equals("code", StringComparison.OrdinalIgnoreCase)
+            || target.Equals("vscode", StringComparison.OrdinalIgnoreCase)
+            || haystack.Contains(" vscode ", StringComparison.OrdinalIgnoreCase)) return VsCode.Name;
+
+        return AiCode.Name;
     }
 
     private static RecordingProfile? Unknown(string name)
     {
         Console.Error.WriteLine($"Unknown profile: {name}");
-        Console.Error.WriteLine("Known profiles: ai-code, none");
+        Console.Error.WriteLine("Known profiles: ai-code, codex, claude, cursor, vscode, none");
         return null;
     }
 }

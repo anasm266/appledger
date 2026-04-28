@@ -49,12 +49,14 @@ internal static class Program
         }
 
         var target = args[0].Trim('"');
-        if (ProcessCatalog.Resolve(target) is not null)
+        var root = ProcessCatalog.Resolve(target);
+        var defaultProfileName = RecordingProfile.InferName(target, root);
+        if (root is not null)
         {
-            return await AttachAsync(args, defaultProfileName: "ai-code");
+            return await AttachAsync(args, defaultProfileName);
         }
 
-        return await RunAsync(args, defaultProfileName: "ai-code");
+        return await RunAsync(args, defaultProfileName);
     }
 
     private static async Task<int> RunAsync(string[] args, string? defaultProfileName = null)
@@ -70,6 +72,7 @@ internal static class Program
         Console.WriteLine("AppLedger session recorder");
         Console.WriteLine($"  App:       {options.Target}");
         Console.WriteLine($"  Output:    {options.OutputDirectory}");
+        Console.WriteLine($"  Profile:   {options.ProfileName ?? "none"}");
         Console.WriteLine($"  Watch:     {DescribeWatchScope(options.WatchRoots, options.WatchAll)}");
         Console.WriteLine($"  Filters:   {DescribeFilters(options.PathFilter)}");
         Console.WriteLine();
@@ -219,6 +222,7 @@ internal static class Program
         Console.WriteLine($"  PID:       {options.Root.ProcessId}");
         Console.WriteLine($"  App:       {options.Root.ExecutablePath ?? options.Root.Name}");
         Console.WriteLine($"  Output:    {options.OutputDirectory}");
+        Console.WriteLine($"  Profile:   {options.ProfileName ?? "none"}");
         Console.WriteLine($"  Watch:     {DescribeWatchScope(options.WatchRoots, options.WatchAll)}");
         Console.WriteLine($"  Filters:   {DescribeFilters(options.PathFilter)}");
         Console.WriteLine();
@@ -561,7 +565,7 @@ internal static class Program
           appledger apps [search]
           appledger apps --running [search]
           appledger ps [search]
-          appledger record <app|process search|pid> [--profile ai-code] [--watch <path>] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--out <dir>] [--timeout <seconds>]
+          appledger record <app|process search|pid> [--profile ai-code|codex|claude|cursor|vscode|none] [--watch <path>] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--out <dir>] [--timeout <seconds>]
           appledger run <app name|alias|exe> [--args "<arguments>"] [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
           appledger attach <pid|process search> [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
           appledger report <session.json|session.sqlite> [--out <dir>] [--no-sqlite]
@@ -572,6 +576,9 @@ internal static class Program
           appledger apps code
           appledger apps --running codex
           appledger record codex --watch .
+          appledger record claude --watch .
+          appledger record cursor --watch .
+          appledger record code --watch .
           appledger record codex --watch . --exclude node_modules --exclude .git\objects
           appledger attach codex --profile ai-code
           appledger run code --watch "C:\Users\Anas\Projects\demo-app"

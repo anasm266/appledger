@@ -172,7 +172,8 @@ internal static class Program
             fileEvents,
             processSampler.Processes.Values.OrderBy(p => p.FirstSeen).ToList(),
             networkSampler.Events.OrderBy(e => e.FirstSeen).ToList(),
-            registryEvents);
+            registryEvents,
+            CaptureSettings(options.ProfileName, options.WatchAll, options.CaptureReads, options.MaxEvents, options.WriteSqlite));
 
         var outputs = (await SessionOutputs.WriteAsync(session, options.OutputDirectory, JsonOptions)).ToList();
         if (options.WriteSqlite)
@@ -187,7 +188,7 @@ internal static class Program
         Console.WriteLine($"  Files created:  {session.Summary.FilesCreated}");
         Console.WriteLine($"  Files modified: {session.Summary.FilesModified}");
         Console.WriteLine($"  Files deleted:  {session.Summary.FilesDeleted}");
-        Console.WriteLine($"  File reads:     {session.Summary.FilesRead}");
+        Console.WriteLine($"  File reads:     {RenderFileReadSummary(session)}");
         Console.WriteLine($"  File renames:   {session.Summary.FilesRenamed}");
         Console.WriteLine($"  Processes:      {session.Processes.Count}");
         Console.WriteLine($"  Commands:       {session.Processes.Count(p => !string.IsNullOrWhiteSpace(p.CommandLine))}");
@@ -310,7 +311,8 @@ internal static class Program
             fileEvents,
             processSampler.Processes.Values.OrderBy(p => p.FirstSeen).ToList(),
             networkSampler.Events.OrderBy(e => e.FirstSeen).ToList(),
-            registryEvents);
+            registryEvents,
+            CaptureSettings(options.ProfileName, options.WatchAll, options.CaptureReads, options.MaxEvents, options.WriteSqlite));
 
         var outputs = (await SessionOutputs.WriteAsync(session, options.OutputDirectory, JsonOptions)).ToList();
         if (options.WriteSqlite)
@@ -325,7 +327,7 @@ internal static class Program
         Console.WriteLine($"  Files created:  {session.Summary.FilesCreated}");
         Console.WriteLine($"  Files modified: {session.Summary.FilesModified}");
         Console.WriteLine($"  Files deleted:  {session.Summary.FilesDeleted}");
-        Console.WriteLine($"  File reads:     {session.Summary.FilesRead}");
+        Console.WriteLine($"  File reads:     {RenderFileReadSummary(session)}");
         Console.WriteLine($"  File renames:   {session.Summary.FilesRenamed}");
         Console.WriteLine($"  Processes:      {session.Processes.Count}");
         Console.WriteLine($"  Commands:       {session.Processes.Count(p => !string.IsNullOrWhiteSpace(p.CommandLine))}");
@@ -485,6 +487,14 @@ internal static class Program
                 ? "[all live file paths]"
                 : $"[all live file paths] + snapshots under {string.Join("; ", watchRoots)}")
             : string.Join("; ", watchRoots);
+
+    private static SessionCaptureSettings CaptureSettings(string? profile, bool watchAll, bool captureReads, int? maxEvents, bool writeSqlite) =>
+        new(profile, watchAll, captureReads, maxEvents, writeSqlite);
+
+    private static string RenderFileReadSummary(SessionReport session) =>
+        session.CaptureSettings?.CaptureReads == false
+            ? "disabled by capture settings"
+            : session.Summary.FilesRead.ToString("N0", CultureInfo.InvariantCulture);
 
     private static void PrintHelp()
     {

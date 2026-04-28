@@ -176,6 +176,34 @@ public sealed class NormalizationTests
     }
 
     [Fact]
+    public void HtmlReport_ShowsDisabledFileReadsWhenCaptureReadsIsOff()
+    {
+        var session = new SessionReport(
+            App: @"C:\Program Files\App\App.exe",
+            Arguments: "",
+            StartedAt: At(65),
+            EndedAt: At(66),
+            WatchRoots: [],
+            WatchAll: true,
+            Summary: new SessionSummary(0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0),
+            FileEvents: [],
+            Processes: [new ProcessRecord(10, 0, "codex.exe", @"C:\Program Files\App\App.exe", "\"app.exe\"", At(65), At(65), At(66))],
+            NetworkEvents: [],
+            RegistryEvents: [],
+            Findings: [],
+            TopFolders: [],
+            AiActivity: EmptyAi(),
+            SnapshotErrors: [],
+            CaptureSettings: new SessionCaptureSettings("ai-code", WatchAll: true, CaptureReads: false, MaxEvents: 50_000, WriteSqlite: true));
+
+        var html = HtmlReport.Render(session);
+
+        Assert.Contains("file reads disabled", html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("disabled by capture settings", html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ai-code", html, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void NetworkSummaryAnalyzer_GroupsByResolvedHostAndProcess()
     {
         var processes = new List<ProcessRecord>

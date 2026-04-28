@@ -17,7 +17,8 @@ internal sealed record SessionReport(
     AiCodingActivity? AiActivity,
     IReadOnlyList<string> SnapshotErrors,
     SessionActivityOverview? ActivityOverview = null,
-    SessionNetworkOverview? NetworkOverview = null)
+    SessionNetworkOverview? NetworkOverview = null,
+    SessionCaptureSettings? CaptureSettings = null)
 {
     public static SessionReport Build(
         string app,
@@ -31,7 +32,8 @@ internal sealed record SessionReport(
         IReadOnlyList<FileEvent> fileEvents,
         IReadOnlyList<ProcessRecord> processes,
         IReadOnlyList<NetworkEvent> networkEvents,
-        IReadOnlyList<RegistryEvent> registryEvents)
+        IReadOnlyList<RegistryEvent> registryEvents,
+        SessionCaptureSettings? captureSettings = null)
     {
         var normalizedFileEvents = FileEventMerger.NormalizeForSession(fileEvents);
         var normalizedNetworkEvents = NetworkResolver.Enrich(networkEvents);
@@ -70,7 +72,8 @@ internal sealed record SessionReport(
             aiActivity,
             before.Errors.Concat(after.Errors).Distinct().Take(200).ToList(),
             activityOverview,
-            networkOverview);
+            networkOverview,
+            captureSettings ?? SessionCaptureSettings.Default(watchAll));
     }
 
     public static SessionReport RefreshDerivedData(SessionReport session)
@@ -104,7 +107,8 @@ internal sealed record SessionReport(
             TopFolders = topFolders,
             AiActivity = aiActivity,
             ActivityOverview = activityOverview,
-            NetworkOverview = networkOverview
+            NetworkOverview = networkOverview,
+            CaptureSettings = session.CaptureSettings ?? SessionCaptureSettings.Default(session.WatchAll)
         };
     }
 
@@ -137,6 +141,17 @@ internal sealed record SessionSummary(
     int NetworkConnectionCount,
     int RegistryChangeCount,
     int RiskObservationCount);
+
+internal sealed record SessionCaptureSettings(
+    string? Profile,
+    bool WatchAll,
+    bool CaptureReads,
+    int? MaxEvents,
+    bool WriteSqlite)
+{
+    public static SessionCaptureSettings Default(bool watchAll) =>
+        new(null, watchAll, CaptureReads: true, MaxEvents: null, WriteSqlite: true);
+}
 
 internal sealed record SessionActivityOverview(
     string Headline,

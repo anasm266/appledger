@@ -67,7 +67,7 @@ internal static class Program
         Console.WriteLine("AppLedger session recorder");
         Console.WriteLine($"  App:       {options.Target}");
         Console.WriteLine($"  Output:    {options.OutputDirectory}");
-        Console.WriteLine($"  Watch:     {string.Join("; ", options.WatchRoots)}");
+        Console.WriteLine($"  Watch:     {DescribeWatchScope(options.WatchRoots, options.WatchAll)}");
         Console.WriteLine();
 
         Console.WriteLine("Taking before snapshot...");
@@ -75,7 +75,7 @@ internal static class Program
         var registryBefore = RegistrySnapshot.Capture();
 
         using var stop = new CancellationTokenSource();
-        using var etwCollector = EtwCollector.TryStart(options.WatchRoots);
+        using var etwCollector = EtwCollector.TryStart(options.WatchRoots, options.WatchAll);
         if (etwCollector.IsRunning)
         {
             Console.WriteLine("ETW:       live kernel file/process capture enabled");
@@ -157,6 +157,7 @@ internal static class Program
             startedAt,
             endedAt,
             options.WatchRoots,
+            options.WatchAll,
             before,
             after,
             fileEvents,
@@ -204,7 +205,7 @@ internal static class Program
         Console.WriteLine($"  PID:       {options.Root.ProcessId}");
         Console.WriteLine($"  App:       {options.Root.ExecutablePath ?? options.Root.Name}");
         Console.WriteLine($"  Output:    {options.OutputDirectory}");
-        Console.WriteLine($"  Watch:     {string.Join("; ", options.WatchRoots)}");
+        Console.WriteLine($"  Watch:     {DescribeWatchScope(options.WatchRoots, options.WatchAll)}");
         Console.WriteLine();
 
         Console.WriteLine("Taking before snapshot...");
@@ -212,7 +213,7 @@ internal static class Program
         var registryBefore = RegistrySnapshot.Capture();
 
         using var stop = new CancellationTokenSource();
-        using var etwCollector = EtwCollector.TryStart(options.WatchRoots);
+        using var etwCollector = EtwCollector.TryStart(options.WatchRoots, options.WatchAll);
         if (etwCollector.IsRunning)
         {
             Console.WriteLine("ETW:       live kernel file/process capture enabled");
@@ -285,6 +286,7 @@ internal static class Program
             startedAt,
             endedAt,
             options.WatchRoots,
+            options.WatchAll,
             before,
             after,
             fileEvents,
@@ -453,6 +455,13 @@ internal static class Program
         return 1;
     }
 
+    private static string DescribeWatchScope(IReadOnlyList<string> watchRoots, bool watchAll) =>
+        watchAll
+            ? (watchRoots.Count == 0
+                ? "[all live file paths]"
+                : $"[all live file paths] + snapshots under {string.Join("; ", watchRoots)}")
+            : string.Join("; ", watchRoots);
+
     private static void PrintHelp()
     {
         Console.WriteLine("""
@@ -461,8 +470,8 @@ internal static class Program
         Usage:
           appledger apps [search]
           appledger ps [search]
-          appledger run <app name|alias|exe> [--args "<arguments>"] [--watch <path>] [--out <dir>] [--timeout <seconds>]
-          appledger attach <pid|process search> [--watch <path>] [--out <dir>] [--timeout <seconds>]
+          appledger run <app name|alias|exe> [--args "<arguments>"] [--watch <path>] [--watch-all] [--out <dir>] [--timeout <seconds>]
+          appledger attach <pid|process search> [--watch <path>] [--watch-all] [--out <dir>] [--timeout <seconds>]
           appledger report <session.json|session.sqlite> [--out <dir>]
           appledger snapshot <output.json> --watch <path>
           appledger diff <before.json> <after.json>
@@ -472,6 +481,7 @@ internal static class Program
           appledger run code --watch "C:\Users\Anas\Projects\demo-app"
           appledger ps codex
           appledger attach 20376 --watch "C:\Users\Anas\Documents\New project 8" --out artifacts\codex-self --timeout 300
+          appledger attach 20376 --watch-all --out artifacts\codex-full
           appledger run "C:\Windows\System32\notepad.exe" --watch "%USERPROFILE%\Documents"
           appledger run "C:\Path\To\Code.exe" --watch "C:\Users\Anas\Projects\demo-app"
 
@@ -488,13 +498,14 @@ internal sealed record RunOptions(
     string WorkingDirectory,
     string OutputDirectory,
     IReadOnlyList<string> WatchRoots,
+    bool WatchAll,
     TimeSpan? Timeout)
 {
     public static RunOptions? Parse(string[] args)
     {
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("Usage: appledger run <app name|alias|exe> [--args \"...\"] [--watch <path>] [--out <dir>]");
+            Console.Error.WriteLine("Usage: appledger run <app name|alias|exe> [--args \"...\"] [--watch <path>] [--watch-all] [--out <dir>]");
             return null;
         }
 
@@ -519,8 +530,9 @@ internal sealed record RunOptions(
             .Where(Directory.Exists)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+        var watchAll = Cli.HasFlag(args, "--watch-all");
 
-        if (watchRoots.Count == 0)
+        if (watchRoots.Count == 0 && !watchAll)
         {
             watchRoots.Add(Directory.GetCurrentDirectory());
             var temp = Path.GetTempPath();
@@ -542,6 +554,7 @@ internal sealed record RunOptions(
             Directory.GetCurrentDirectory(),
             output,
             watchRoots,
+            watchAll,
             timeout);
     }
 }
@@ -550,13 +563,14 @@ internal sealed record AttachOptions(
     ProcessRecord Root,
     string OutputDirectory,
     IReadOnlyList<string> WatchRoots,
+    bool WatchAll,
     TimeSpan? Timeout)
 {
     public static AttachOptions? Parse(string[] args)
     {
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("Usage: appledger attach <pid|process search> [--watch <path>] [--out <dir>] [--timeout <seconds>]");
+            Console.Error.WriteLine("Usage: appledger attach <pid|process search> [--watch <path>] [--watch-all] [--out <dir>] [--timeout <seconds>]");
             return null;
         }
 
@@ -580,8 +594,9 @@ internal sealed record AttachOptions(
             .Where(Directory.Exists)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+        var watchAll = Cli.HasFlag(args, "--watch-all");
 
-        if (watchRoots.Count == 0)
+        if (watchRoots.Count == 0 && !watchAll)
         {
             watchRoots.Add(Directory.GetCurrentDirectory());
             var temp = Path.GetTempPath();
@@ -597,7 +612,7 @@ internal sealed record AttachOptions(
             timeout = TimeSpan.FromSeconds(timeoutSeconds);
         }
 
-        return new AttachOptions(root, output, watchRoots, timeout);
+        return new AttachOptions(root, output, watchRoots, watchAll, timeout);
     }
 }
 
@@ -627,6 +642,9 @@ internal static class Cli
             }
         }
     }
+
+    public static bool HasFlag(IReadOnlyList<string> args, string name) =>
+        args.Any(arg => string.Equals(arg, name, StringComparison.OrdinalIgnoreCase));
 }
 
 internal sealed record FileSnapshot(
@@ -887,7 +905,13 @@ internal static class FileEventMerger
             });
         }
 
-        return result;
+        return result
+            .Select(file => file with
+            {
+                Category = PathClassifier.Classify(file.Path),
+                IsSensitive = PathClassifier.IsSensitive(file.Path)
+            })
+            .ToList();
     }
 
     private static string Normalize(string path) => Path.GetFullPath(path).TrimEnd('\\');
@@ -1069,6 +1093,7 @@ internal sealed record ProcessRecord(
 internal sealed class EtwCollector : IDisposable
 {
     private readonly IReadOnlyList<string> _watchRoots;
+    private readonly bool _watchAll;
     private readonly ConcurrentDictionary<int, byte> _sessionPids = new();
     private readonly ConcurrentDictionary<int, ProcessRecord> _processes = new();
     private readonly ConcurrentQueue<FileEvent> _fileEvents = new();
@@ -1077,9 +1102,10 @@ internal sealed class EtwCollector : IDisposable
     private ProcessSampler? _processSampler;
     private volatile bool _disposed;
 
-    private EtwCollector(IReadOnlyList<string> watchRoots, TraceEventSession? session, Task? processingTask, string? status)
+    private EtwCollector(IReadOnlyList<string> watchRoots, bool watchAll, TraceEventSession? session, Task? processingTask, string? status)
     {
         _watchRoots = watchRoots;
+        _watchAll = watchAll;
         _session = session;
         _processingTask = processingTask;
         Status = status;
@@ -1093,17 +1119,17 @@ internal sealed class EtwCollector : IDisposable
 
     public IReadOnlyList<ProcessRecord> Processes => _processes.Values.ToArray();
 
-    public static EtwCollector TryStart(IReadOnlyList<string> watchRoots)
+    public static EtwCollector TryStart(IReadOnlyList<string> watchRoots, bool watchAll)
     {
         if (TraceEventSession.IsElevated() != true)
         {
-            return new EtwCollector(watchRoots, null, null, "run from an elevated terminal for live ETW file events");
+            return new EtwCollector(watchRoots, watchAll, null, null, "run from an elevated terminal for live ETW file events");
         }
 
         try
         {
             var session = new TraceEventSession(KernelTraceEventParser.KernelSessionName) { StopOnDispose = true };
-            var collector = new EtwCollector(watchRoots, session, null, null);
+            var collector = new EtwCollector(watchRoots, watchAll, session, null, null);
             session.EnableKernelProvider(
                 KernelTraceEventParser.Keywords.Process
                 | KernelTraceEventParser.Keywords.FileIO
@@ -1126,7 +1152,7 @@ internal sealed class EtwCollector : IDisposable
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or InvalidOperationException or COMException)
         {
-            return new EtwCollector(watchRoots, null, null, ex.Message);
+            return new EtwCollector(watchRoots, watchAll, null, null, ex.Message);
         }
     }
 
@@ -1220,7 +1246,12 @@ internal sealed class EtwCollector : IDisposable
 
     private void AddFile(FileEventKind kind, string? path, int processId, string? processName, DateTime timestamp)
     {
-        if (string.IsNullOrWhiteSpace(path) || !PathClassifier.IsUnderAnyWatchRoot(path, _watchRoots))
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        if (!_watchAll && !PathClassifier.IsUnderAnyWatchRoot(path, _watchRoots))
         {
             return;
         }
@@ -1785,6 +1816,7 @@ internal static class PathClassifier
 {
     private static readonly string UserProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     private static readonly string Windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+    private static readonly string CommonApplicationData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
     private static readonly string ProgramFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
     private static readonly string ProgramFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
     private static readonly string AppData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
@@ -1795,6 +1827,7 @@ internal static class PathClassifier
 
     public static string Classify(string path)
     {
+        if (IsSystemRuntimeNoise(path)) return "system-runtime";
         if (IsSensitive(path)) return "sensitive";
         if (IsUnder(path, Path.GetTempPath())) return "temp";
         if (IsUnder(path, AppData) || IsUnder(path, LocalAppData)) return "app-data";
@@ -1810,6 +1843,11 @@ internal static class PathClassifier
 
     public static bool IsSensitive(string path)
     {
+        if (IsSystemRuntimeNoise(path))
+        {
+            return false;
+        }
+
         var normalized = path.Replace('/', '\\');
         var fileName = Path.GetFileName(normalized);
         return normalized.Contains("\\.ssh\\", StringComparison.OrdinalIgnoreCase)
@@ -1824,6 +1862,16 @@ internal static class PathClassifier
             || fileName.Contains("id_rsa", StringComparison.OrdinalIgnoreCase)
             || fileName.Contains("credentials", StringComparison.OrdinalIgnoreCase)
             || fileName.Contains("token", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool IsSystemRuntimeNoise(string path)
+    {
+        var normalized = path.Replace('/', '\\');
+        return normalized.Contains("\\ProgramData\\Microsoft\\NetFramework\\BreadcrumbStore\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\Microsoft\\CLR_v4.0\\UsageLogs\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\assembly\\NativeImages_", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\AppData\\Local\\Microsoft\\CLR_v4.0\\", StringComparison.OrdinalIgnoreCase)
+            || (IsUnder(normalized, CommonApplicationData) && normalized.Contains("\\Microsoft\\NetFramework\\", StringComparison.OrdinalIgnoreCase));
     }
 
     public static bool IsUsuallyNoise(string path)
@@ -1878,6 +1926,7 @@ internal sealed record SessionReport(
     DateTimeOffset StartedAt,
     DateTimeOffset EndedAt,
     IReadOnlyList<string> WatchRoots,
+    bool WatchAll,
     SessionSummary Summary,
     IReadOnlyList<FileEvent> FileEvents,
     IReadOnlyList<ProcessRecord> Processes,
@@ -1894,6 +1943,7 @@ internal sealed record SessionReport(
         DateTimeOffset startedAt,
         DateTimeOffset endedAt,
         IReadOnlyList<string> watchRoots,
+        bool watchAll,
         FileSnapshot before,
         FileSnapshot after,
         IReadOnlyList<FileEvent> fileEvents,
@@ -1924,6 +1974,7 @@ internal sealed record SessionReport(
             startedAt,
             endedAt,
             watchRoots,
+            watchAll,
             summary,
             normalizedFileEvents,
             processes,
@@ -2033,7 +2084,7 @@ internal static class Analyzer
         var findings = new List<Finding>();
 
         foreach (var group in files
-            .Where(f => f.IsSensitive)
+            .Where(f => f.IsSensitive && !PathClassifier.IsSystemRuntimeNoise(f.Path))
             .GroupBy(f => NormalizePath(f.Path), StringComparer.OrdinalIgnoreCase)
             .Take(20))
         {
@@ -2470,8 +2521,9 @@ internal static class SessionStore
 
         using var connection = new SqliteConnection($"Data Source={path}");
         connection.Open();
+        using var transaction = connection.BeginTransaction();
 
-        Execute(connection, """
+        Execute(connection, transaction, """
             CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE processes (process_id INTEGER, parent_process_id INTEGER, name TEXT, executable_path TEXT, command_line TEXT, first_seen TEXT, last_seen TEXT);
             CREATE TABLE file_events (kind TEXT, path TEXT, category TEXT, source TEXT, observed_at TEXT, process_id INTEGER, process_name TEXT, size_delta INTEGER, is_sensitive INTEGER, related_path TEXT);
@@ -2480,7 +2532,7 @@ internal static class SessionStore
             CREATE TABLE findings (severity TEXT, title TEXT, detail TEXT);
             """);
 
-        Insert(connection, "INSERT INTO metadata(key, value) VALUES ($key, $value)", new()
+        Insert(connection, transaction, "INSERT INTO metadata(key, value) VALUES ($key, $value)", new()
         {
             ["$key"] = "session_json",
             ["$value"] = JsonSerializer.Serialize(session, ProgramJson.Options)
@@ -2488,7 +2540,7 @@ internal static class SessionStore
 
         foreach (var process in session.Processes)
         {
-            Insert(connection, "INSERT INTO processes VALUES ($pid, $parent, $name, $exe, $cmd, $first, $last)", new()
+            Insert(connection, transaction, "INSERT INTO processes VALUES ($pid, $parent, $name, $exe, $cmd, $first, $last)", new()
             {
                 ["$pid"] = process.ProcessId,
                 ["$parent"] = process.ParentProcessId,
@@ -2502,7 +2554,7 @@ internal static class SessionStore
 
         foreach (var file in session.FileEvents)
         {
-            Insert(connection, "INSERT INTO file_events VALUES ($kind, $path, $category, $source, $observed, $pid, $pname, $delta, $sensitive, $related)", new()
+            Insert(connection, transaction, "INSERT INTO file_events VALUES ($kind, $path, $category, $source, $observed, $pid, $pname, $delta, $sensitive, $related)", new()
             {
                 ["$kind"] = file.Kind.ToString(),
                 ["$path"] = file.Path,
@@ -2519,7 +2571,7 @@ internal static class SessionStore
 
         foreach (var item in session.NetworkEvents)
         {
-            Insert(connection, "INSERT INTO network_events VALUES ($pid, $local, $lport, $remote, $rport, $state, $first)", new()
+            Insert(connection, transaction, "INSERT INTO network_events VALUES ($pid, $local, $lport, $remote, $rport, $state, $first)", new()
             {
                 ["$pid"] = item.ProcessId,
                 ["$local"] = item.LocalAddress,
@@ -2533,7 +2585,7 @@ internal static class SessionStore
 
         foreach (var item in session.RegistryEvents)
         {
-            Insert(connection, "INSERT INTO registry_events VALUES ($kind, $key, $before, $after)", new()
+            Insert(connection, transaction, "INSERT INTO registry_events VALUES ($kind, $key, $before, $after)", new()
             {
                 ["$kind"] = item.Kind.ToString(),
                 ["$key"] = item.Key,
@@ -2544,13 +2596,15 @@ internal static class SessionStore
 
         foreach (var finding in session.Findings)
         {
-            Insert(connection, "INSERT INTO findings VALUES ($severity, $title, $detail)", new()
+            Insert(connection, transaction, "INSERT INTO findings VALUES ($severity, $title, $detail)", new()
             {
                 ["$severity"] = finding.Severity,
                 ["$title"] = finding.Title,
                 ["$detail"] = finding.Detail
             });
         }
+
+        transaction.Commit();
     }
 
     public static SessionReport? Read(string path)
@@ -2566,16 +2620,18 @@ internal static class SessionStore
             : JsonSerializer.Deserialize<SessionReport>(value, ProgramJson.Options);
     }
 
-    private static void Execute(SqliteConnection connection, string sql)
+    private static void Execute(SqliteConnection connection, SqliteTransaction transaction, string sql)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = sql;
         command.ExecuteNonQuery();
     }
 
-    private static void Insert(SqliteConnection connection, string sql, Dictionary<string, object?> values)
+    private static void Insert(SqliteConnection connection, SqliteTransaction transaction, string sql, Dictionary<string, object?> values)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = sql;
         foreach (var (key, value) in values)
         {
@@ -2606,7 +2662,7 @@ internal static class HtmlReport
         var processes = string.Join(Environment.NewLine, session.Processes.Select(p => $"<tr><td>{p.ProcessId}</td><td>{Esc(p.Name)}</td><td>{Esc(p.CommandLine ?? "")}</td></tr>"));
         var network = string.Join(Environment.NewLine, session.NetworkEvents.Take(200).Select(n => $"<tr><td>{n.ProcessId}</td><td>{Esc(n.RemoteAddress)}:{n.RemotePort}</td><td>{Esc(n.State)}</td></tr>"));
         var findings = string.Join(Environment.NewLine, session.Findings.Select(f => $"<li class=\"{Esc(f.Severity)}\"><strong>{Esc(f.Severity.ToUpperInvariant())}</strong> {Esc(f.Title)}<br><span>{Esc(f.Detail)}</span></li>"));
-        var folders = string.Join(Environment.NewLine, session.TopFolders.Where(f => !IsGitInternalPath(f.Path)).Select(f => $"<tr><td>{Esc(f.Path)}</td><td>{Esc(f.Category)}</td><td>{f.FileCount:N0}</td><td>{Format.Bytes(f.BytesAdded)}</td></tr>"));
+        var folders = string.Join(Environment.NewLine, session.TopFolders.Where(f => !IsGitInternalPath(f.Path) && !PathClassifier.IsSystemRuntimeNoise(f.Path)).Select(f => $"<tr><td>{Esc(f.Path)}</td><td>{Esc(f.Category)}</td><td>{f.FileCount:N0}</td><td>{Format.Bytes(f.BytesAdded)}</td></tr>"));
         var projectFiles = string.Join(Environment.NewLine, ai.ChangedProjectFiles.Select(RenderProjectFileRow));
         var commands = string.Join(Environment.NewLine, ai.DeveloperCommands.Select(RenderCommandRow));
         var sensitive = string.Join(Environment.NewLine, ai.SensitiveAccesses.Select(RenderSensitiveRow));
@@ -2614,6 +2670,8 @@ internal static class HtmlReport
         var timeline = string.Join(Environment.NewLine, ai.ProcessTimeline.Select(RenderTimelineRow));
         var gitMetadata = SummarizeGitInternalActivity(session.FileEvents);
         var gitMetadataExamples = string.Join(Environment.NewLine, gitMetadata.Examples.Select(example => $"<li><code>{Esc(example)}</code></li>"));
+        var runtimeNoise = SummarizeSystemRuntimeActivity(session.FileEvents);
+        var runtimeNoiseExamples = string.Join(Environment.NewLine, runtimeNoise.Examples.Select(example => $"<li><code>{Esc(example)}</code></li>"));
 
         return $$"""
         <!doctype html>
@@ -2652,7 +2710,7 @@ internal static class HtmlReport
         <body>
           <header>
             <h1>AppLedger Report: {{appName}}</h1>
-            <p>{{Esc(session.StartedAt.ToString("g"))}} - {{Esc(session.EndedAt.ToString("g"))}} - {{Esc(string.Join("; ", session.WatchRoots))}}</p>
+            <p>{{Esc(session.StartedAt.ToString("g"))}} - {{Esc(session.EndedAt.ToString("g"))}} - {{Esc(RenderWatchScope(session))}}</p>
           </header>
           <main>
             <section class="grid">
@@ -2706,6 +2764,23 @@ internal static class HtmlReport
             </section>
 
             <section>
+              <h2>System Runtime Activity</h2>
+              {{(runtimeNoise.Total == 0
+                  ? "<p class=\"muted\">No framework or runtime noise was summarized for this session.</p>"
+                  : $"""
+              <div class="grid">
+                <div class="metric"><strong>{runtimeNoise.Total:N0}</strong><span>runtime writes</span></div>
+                <div class="metric"><strong>{runtimeNoise.Created:N0}</strong><span>created</span></div>
+                <div class="metric"><strong>{runtimeNoise.Modified:N0}</strong><span>modified</span></div>
+                <div class="metric"><strong>{runtimeNoise.Deleted:N0}</strong><span>deleted</span></div>
+                <div class="metric"><strong>{runtimeNoise.Renamed:N0}</strong><span>renamed</span></div>
+              </div>
+              <p class="muted">Framework and runtime bookkeeping is summarized here instead of being treated as sensitive or mixed into the main file tables. Raw events remain in JSON, CSV, and SQLite exports.</p>
+              <div class="panel"><div style="padding:14px 16px;"><ul>{runtimeNoiseExamples}</ul></div></div>
+              """)}}
+            </section>
+
+            <section>
               <h2>Developer Commands</h2>
               {{(ai.DeveloperCommands.Count == 0 ? "<p class=\"muted\">No package, git, test, shell, or script commands detected.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Kind</th><th>Seen</th><th>First PID</th><th>Process</th><th>Command</th></tr></thead><tbody>{commands}</tbody></table></div>")}}
             </section>
@@ -2727,12 +2802,12 @@ internal static class HtmlReport
 
             <section>
               <h2>Top Folders Touched</h2>
-              {{(string.IsNullOrWhiteSpace(folders) ? "<p class=\"muted\">No non-.git folder writes were summarized for this session.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Folder</th><th>Category</th><th>Files</th><th>Growth</th></tr></thead><tbody>{folders}</tbody></table></div>")}}
+              {{(string.IsNullOrWhiteSpace(folders) ? "<p class=\"muted\">No non-.git, non-runtime folder writes were summarized for this session.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Folder</th><th>Category</th><th>Files</th><th>Growth</th></tr></thead><tbody>{folders}</tbody></table></div>")}}
             </section>
 
             <section>
               <h2>Files</h2>
-              <p class="muted">This table prioritizes writes, sensitive reads, and a deduplicated sample of other reads. Internal .git writes are summarized separately. Raw events remain in JSON, CSV, and SQLite exports.</p>
+              <p class="muted">This table prioritizes writes, sensitive reads, and a deduplicated sample of other reads. Internal .git and runtime bookkeeping writes are summarized separately. Raw events remain in JSON, CSV, and SQLite exports.</p>
               <div class="panel"><table><thead><tr><th>Action</th><th>Source</th><th>PID</th><th>Category</th><th>Delta</th><th>Path</th></tr></thead><tbody>{{rows}}</tbody></table></div>
             </section>
 
@@ -2775,7 +2850,7 @@ internal static class HtmlReport
     {
         var writes = events
             .Where(file => file.Kind is FileEventKind.Created or FileEventKind.Modified or FileEventKind.Deleted or FileEventKind.Renamed)
-            .Where(file => !IsGitInternalPath(file.Path))
+            .Where(file => !IsGitInternalPath(file.Path) && !PathClassifier.IsSystemRuntimeNoise(file.Path))
             .OrderBy(file => file.ObservedAt)
             .Take(120);
 
@@ -2825,6 +2900,28 @@ internal static class HtmlReport
             examples);
     }
 
+    private static SystemRuntimeSummary SummarizeSystemRuntimeActivity(IReadOnlyList<FileEvent> events)
+    {
+        var writes = events
+            .Where(file => file.Kind is FileEventKind.Created or FileEventKind.Modified or FileEventKind.Deleted or FileEventKind.Renamed)
+            .Where(file => PathClassifier.IsSystemRuntimeNoise(file.Path))
+            .ToList();
+
+        var examples = writes
+            .Select(file => DescribeSystemRuntimePath(file.Path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToList();
+
+        return new SystemRuntimeSummary(
+            writes.Count,
+            writes.Count(file => file.Kind == FileEventKind.Created),
+            writes.Count(file => file.Kind == FileEventKind.Modified),
+            writes.Count(file => file.Kind == FileEventKind.Deleted),
+            writes.Count(file => file.Kind == FileEventKind.Renamed),
+            examples);
+    }
+
     private static bool IsGitInternalPath(string path) =>
         path.Replace('/', '\\').Contains("\\.git\\", StringComparison.OrdinalIgnoreCase);
 
@@ -2856,6 +2953,40 @@ internal static class HtmlReport
         return relative;
     }
 
+    private static string DescribeSystemRuntimePath(string path)
+    {
+        var normalized = path.Replace('/', '\\');
+        var breadcrumb = "\\ProgramData\\Microsoft\\NetFramework\\BreadcrumbStore\\";
+        var breadcrumbIndex = normalized.IndexOf(breadcrumb, StringComparison.OrdinalIgnoreCase);
+        if (breadcrumbIndex >= 0)
+        {
+            return "ProgramData\\Microsoft\\NetFramework\\BreadcrumbStore\\...";
+        }
+
+        var usageLogs = "\\Microsoft\\CLR_v4.0\\UsageLogs\\";
+        var usageLogIndex = normalized.IndexOf(usageLogs, StringComparison.OrdinalIgnoreCase);
+        if (usageLogIndex >= 0)
+        {
+            return "Microsoft\\CLR_v4.0\\UsageLogs\\...";
+        }
+
+        var nativeImages = "\\assembly\\NativeImages_";
+        var nativeImageIndex = normalized.IndexOf(nativeImages, StringComparison.OrdinalIgnoreCase);
+        if (nativeImageIndex >= 0)
+        {
+            return "assembly\\NativeImages_..."; 
+        }
+
+        return normalized;
+    }
+
+    private static string RenderWatchScope(SessionReport session) =>
+        session.WatchAll
+            ? (session.WatchRoots.Count == 0
+                ? "all live file paths"
+                : $"all live file paths + snapshots under {string.Join("; ", session.WatchRoots)}")
+            : string.Join("; ", session.WatchRoots);
+
     private static string NormalizeVisiblePath(string path)
     {
         try
@@ -2871,6 +3002,7 @@ internal static class HtmlReport
     private static string Esc(string value) => WebUtility.HtmlEncode(value);
 
     private sealed record GitInternalSummary(int Total, int Created, int Modified, int Deleted, int Renamed, IReadOnlyList<string> Examples);
+    private sealed record SystemRuntimeSummary(int Total, int Created, int Modified, int Deleted, int Renamed, IReadOnlyList<string> Examples);
 }
 
 internal static class CsvReport

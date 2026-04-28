@@ -16,6 +16,30 @@ public sealed class NormalizationTests
         Assert.False(options.CaptureReads);
         Assert.Equal(50_000, options.MaxEvents);
         Assert.Contains(Path.GetFullPath(Directory.GetCurrentDirectory()), options.WatchRoots);
+        Assert.Contains("node_modules", options.PathFilter.Excludes);
+        Assert.Contains("appledger-runs", options.PathFilter.Excludes);
+    }
+
+    [Fact]
+    public void RunOptions_ParsesIncludeAndExcludePathFilters()
+    {
+        var options = RunOptions.Parse(["notepad", "--profile", "none", "--include", "src", "--exclude", "node_modules", "--exclude", ".git\\objects"]);
+
+        Assert.NotNull(options);
+        Assert.Contains("src", options.PathFilter.Includes);
+        Assert.Contains("node_modules", options.PathFilter.Excludes);
+        Assert.Contains(".git\\objects", options.PathFilter.Excludes);
+    }
+
+    [Fact]
+    public void PathFilter_AppliesIncludesExcludesAndSegmentMatches()
+    {
+        var filter = PathFilter.From(["src"], ["node_modules", ".git\\objects"]);
+
+        Assert.True(filter.Allows(@"C:\repo\src\App.cs"));
+        Assert.False(filter.Allows(@"C:\repo\tests\AppTests.cs"));
+        Assert.False(filter.Allows(@"C:\repo\src\node_modules\pkg\index.js"));
+        Assert.True(filter.ExcludesDirectory(@"C:\repo\.git\objects"));
     }
 
     [Fact]

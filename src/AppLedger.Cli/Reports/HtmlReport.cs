@@ -331,12 +331,20 @@ internal static class HtmlReport
     {
         var profile = string.IsNullOrWhiteSpace(settings.Profile) ? "none" : settings.Profile;
         var maxEvents = settings.MaxEvents is null ? "none" : settings.MaxEvents.Value.ToString("N0", CultureInfo.InvariantCulture);
+        var includes = settings.IncludeFilters is { Count: > 0 }
+            ? string.Join(", ", settings.IncludeFilters)
+            : "none";
+        var excludes = settings.ExcludeFilters is { Count: > 0 }
+            ? string.Join(", ", settings.ExcludeFilters)
+            : "none";
         var rows = new[]
         {
             ("Profile", profile),
             ("Whole-app live capture", settings.WatchAll ? "enabled" : "disabled"),
             ("File reads", settings.CaptureReads ? "captured" : "disabled by capture settings"),
             ("Live file event cap", maxEvents),
+            ("Include filters", includes),
+            ("Exclude filters", excludes),
             ("SQLite output", settings.WriteSqlite ? "enabled" : "disabled")
         };
 

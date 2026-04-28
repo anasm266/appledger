@@ -41,7 +41,8 @@ internal sealed record NetworkEvent(
     int RemotePort,
     string State,
     DateTimeOffset FirstSeen,
-    string? RemoteHost);
+    string? RemoteHost,
+    ProcessIdentity? Process = null);
 
 internal static class NetworkResolver
 {

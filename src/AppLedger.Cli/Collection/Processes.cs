@@ -171,4 +171,9 @@ internal sealed record ProcessRecord(
     string? CommandLine,
     DateTimeOffset? CreationDate,
     DateTimeOffset FirstSeen,
-    DateTimeOffset LastSeen);
+    DateTimeOffset LastSeen)
+{
+    public string? CommandLineHash => ProcessIdentity.HashCommandLine(CommandLine);
+
+    public ProcessIdentity Identity => ProcessIdentity.From(this);
+}

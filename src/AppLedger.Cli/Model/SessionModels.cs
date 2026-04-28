@@ -35,8 +35,9 @@ internal sealed record SessionReport(
         IReadOnlyList<RegistryEvent> registryEvents,
         SessionCaptureSettings? captureSettings = null)
     {
-        var normalizedFileEvents = FileEventMerger.NormalizeForSession(fileEvents);
-        var normalizedNetworkEvents = NetworkResolver.Enrich(networkEvents);
+        var processLookup = BuildProcessIdentityLookup(processes);
+        var normalizedFileEvents = AttachProcessIdentities(FileEventMerger.NormalizeForSession(fileEvents), processLookup);
+        var normalizedNetworkEvents = AttachProcessIdentities(NetworkResolver.Enrich(networkEvents), processLookup);
         var topFolders = BuildFolderImpact(normalizedFileEvents);
         var findings = Analyzer.Find(normalizedFileEvents, processes, normalizedNetworkEvents, registryEvents, topFolders);
         var aiActivity = AiCodingAnalyzer.Build(watchRoots, normalizedFileEvents, processes);
@@ -78,8 +79,9 @@ internal sealed record SessionReport(
 
     public static SessionReport RefreshDerivedData(SessionReport session)
     {
-        var normalizedFileEvents = FileEventMerger.NormalizeForSession(session.FileEvents);
-        var normalizedNetworkEvents = NetworkResolver.Enrich(session.NetworkEvents);
+        var processLookup = BuildProcessIdentityLookup(session.Processes);
+        var normalizedFileEvents = AttachProcessIdentities(FileEventMerger.NormalizeForSession(session.FileEvents), processLookup);
+        var normalizedNetworkEvents = AttachProcessIdentities(NetworkResolver.Enrich(session.NetworkEvents), processLookup);
         var topFolders = BuildFolderImpact(normalizedFileEvents);
         var findings = Analyzer.Find(normalizedFileEvents, session.Processes, normalizedNetworkEvents, session.RegistryEvents, topFolders);
         var aiActivity = AiCodingAnalyzer.Build(session.WatchRoots, normalizedFileEvents, session.Processes);
@@ -126,6 +128,52 @@ internal sealed record SessionReport(
             .ThenByDescending(f => f.FileCount)
             .Take(25)
             .ToList();
+    }
+
+    private static Dictionary<int, List<ProcessRecord>> BuildProcessIdentityLookup(IReadOnlyList<ProcessRecord> processes) =>
+        processes
+            .GroupBy(process => process.ProcessId)
+            .ToDictionary(
+                group => group.Key,
+                group => group
+                    .OrderBy(process => process.CreationDate ?? process.FirstSeen)
+                    .ThenBy(process => process.FirstSeen)
+                    .ToList());
+
+    private static List<FileEvent> AttachProcessIdentities(IReadOnlyList<FileEvent> events, IReadOnlyDictionary<int, List<ProcessRecord>> processes) =>
+        events
+            .Select(file => file.Process is not null || file.ProcessId is null
+                ? file
+                : file with { Process = ResolveProcessIdentity(file.ProcessId.Value, file.ObservedAt, processes) })
+            .ToList();
+
+    private static List<NetworkEvent> AttachProcessIdentities(IReadOnlyList<NetworkEvent> events, IReadOnlyDictionary<int, List<ProcessRecord>> processes) =>
+        events
+            .Select(item => item.Process is not null
+                ? item
+                : item with { Process = ResolveProcessIdentity(item.ProcessId, item.FirstSeen, processes) })
+            .ToList();
+
+    private static ProcessIdentity? ResolveProcessIdentity(int processId, DateTimeOffset observedAt, IReadOnlyDictionary<int, List<ProcessRecord>> processes)
+    {
+        if (!processes.TryGetValue(processId, out var candidates) || candidates.Count == 0)
+        {
+            return null;
+        }
+
+        var nearObserved = candidates
+            .Where(process =>
+                process.FirstSeen <= observedAt.AddSeconds(2)
+                && process.LastSeen >= observedAt.AddSeconds(-2))
+            .OrderByDescending(process => process.CreationDate ?? process.FirstSeen)
+            .FirstOrDefault();
+
+        return (nearObserved
+            ?? candidates
+                .OrderBy(process => Math.Abs((process.FirstSeen - observedAt).TotalMilliseconds))
+                .ThenByDescending(process => process.LastSeen)
+                .First())
+            .Identity;
     }
 }
 

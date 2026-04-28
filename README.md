@@ -26,6 +26,7 @@ Current Phase 1 capabilities:
 - detect common startup `Run` and `RunOnce` registry changes
 - summarize whole-app sessions with a top-level "Big Picture" and activity buckets
 - show capture settings in reports so disabled categories such as file reads are explicit
+- attach process identity snapshots to file and network events for stronger attribution
 - keep the CLI implementation split by collector, filesystem, analysis, output, and report responsibilities
 - persist sessions as JSON and SQLite
 - regenerate reports from `session.json` or `session.sqlite`
@@ -44,6 +45,16 @@ Generated artifacts:
 - `commands.json`
 - `ai-activity.json`
 - `cleanup.ps1`
+
+Attribution fields are included in process records and attached to file/network events when a matching process is known:
+
+- `pid`
+- `parent_pid`
+- `creation_time`
+- `exe_path`
+- `command_line_hash`
+- `first_seen`
+- `last_seen`
 
 ## Source Layout
 
@@ -269,6 +280,7 @@ Recent Phase 1 progress:
 - test project covering normalization, rename synthesis, merge behavior, and summary generation
 - grouped network destination/process summaries
 - capture settings shown in reports, including disabled file reads for `ai-code`
+- process identity fields added to JSON, CSV, SQLite, and HTML report views for file/network attribution
 
 ## Roadmap
 

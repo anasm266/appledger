@@ -9,7 +9,7 @@ internal static class HtmlReport
         var activityOverview = session.ActivityOverview ?? SessionActivityAnalyzer.Build(session.WatchRoots, session.WatchAll, session.FileEvents, session.NetworkEvents, ai, session.Findings);
         var networkOverview = session.NetworkOverview ?? NetworkSummaryAnalyzer.Build(session.NetworkEvents, session.Processes);
         var rows = string.Join(Environment.NewLine, VisibleFileEvents(session.FileEvents).Select(RenderFileRow));
-        var processes = string.Join(Environment.NewLine, session.Processes.Select(p => $"<tr><td>{p.ProcessId}</td><td>{Esc(p.Name)}</td><td>{Esc(p.CommandLine ?? "")}</td></tr>"));
+        var processes = string.Join(Environment.NewLine, session.Processes.Select(RenderProcessRow));
         var network = string.Join(Environment.NewLine, session.NetworkEvents.Take(200).Select(RenderNetworkRow));
         var findings = string.Join(Environment.NewLine, session.Findings.Select(f => $"<li class=\"{Esc(f.Severity)}\"><strong>{Esc(f.Severity.ToUpperInvariant())}</strong> {Esc(f.Title)}<br><span>{Esc(f.Detail)}</span></li>"));
         var folders = string.Join(Environment.NewLine, session.TopFolders.Where(f => !IsGitInternalPath(f.Path) && !PathClassifier.IsSystemRuntimeNoise(f.Path)).Select(f => $"<tr><td>{Esc(f.Path)}</td><td>{Esc(f.Category)}</td><td>{f.FileCount:N0}</td><td>{Format.Bytes(f.BytesAdded)}</td></tr>"));
@@ -188,12 +188,12 @@ internal static class HtmlReport
             <section>
               <h2>Files</h2>
               <p class="muted">This table prioritizes writes, sensitive reads, and a deduplicated sample of other reads. Internal .git and runtime bookkeeping writes are summarized separately. Raw events remain in JSON, CSV, and SQLite exports.</p>
-              <div class="panel"><table><thead><tr><th>Action</th><th>Source</th><th>PID</th><th>Category</th><th>Delta</th><th>Path</th></tr></thead><tbody>{{rows}}</tbody></table></div>
+              <div class="panel"><table><thead><tr><th>Action</th><th>Source</th><th>Process Identity</th><th>Category</th><th>Delta</th><th>Path</th></tr></thead><tbody>{{rows}}</tbody></table></div>
             </section>
 
             <section>
               <h2>Child Processes and Commands</h2>
-              <div class="panel"><table><thead><tr><th>PID</th><th>Name</th><th>Command</th></tr></thead><tbody>{{processes}}</tbody></table></div>
+              <div class="panel"><table><thead><tr><th>PID</th><th>Parent</th><th>Created</th><th>First Seen</th><th>Last Seen</th><th>Name</th><th>Command Hash</th><th>Executable / Command</th></tr></thead><tbody>{{processes}}</tbody></table></div>
             </section>
 
             <section>
@@ -213,7 +213,7 @@ internal static class HtmlReport
 
             <section>
               <h2>Network</h2>
-              <div class="panel"><table><thead><tr><th>PID</th><th>Remote Host</th><th>Remote</th><th>State</th></tr></thead><tbody>{{network}}</tbody></table></div>
+              <div class="panel"><table><thead><tr><th>Process Identity</th><th>Remote Host</th><th>Remote</th><th>State</th></tr></thead><tbody>{{network}}</tbody></table></div>
             </section>
 
             <p class="muted">Phase 1 uses ETW file/process events when elevated, live process/network sampling, and before/after file snapshots as fallback. Packet contents are not collected.</p>
@@ -224,7 +224,7 @@ internal static class HtmlReport
     }
 
     private static string RenderFileRow(FileEvent file) =>
-        $"<tr><td>{Esc(file.Kind.ToString())}</td><td>{Esc(file.Source)}</td><td>{Esc(file.ProcessId?.ToString(CultureInfo.InvariantCulture) ?? "")}</td><td>{Esc(file.Category)}</td><td>{Format.Bytes(file.SizeDelta)}</td><td><code>{Esc(RenderFilePath(file))}</code></td></tr>";
+        $"<tr><td>{Esc(file.Kind.ToString())}</td><td>{Esc(file.Source)}</td><td>{RenderProcessIdentity(file.ProcessId, file.ProcessName, file.Process)}</td><td>{Esc(file.Category)}</td><td>{Format.Bytes(file.SizeDelta)}</td><td><code>{Esc(RenderFilePath(file))}</code></td></tr>";
 
     private static string RenderProjectFileRow(ProjectFileChange file) =>
         $"<tr><td>{Esc(file.Kind.ToString())}</td><td>{Esc(file.Source)}</td><td>{Esc(file.Category)}</td><td><code>{Esc(RenderProjectPath(file))}</code></td></tr>";
@@ -242,7 +242,35 @@ internal static class HtmlReport
         $"<tr><td>{Esc(item.FirstSeen.ToString("T", CultureInfo.InvariantCulture))}</td><td>{item.ProcessId}</td><td>{item.ParentProcessId}</td><td>{Esc(item.Name)}</td><td>{item.DurationSeconds:0.0}s</td><td><code>{Esc(item.CommandLine ?? "")}</code></td></tr>";
 
     private static string RenderNetworkRow(NetworkEvent item) =>
-        $"<tr><td>{item.ProcessId}</td><td>{Esc(NetworkResolver.DisplayHostLabel(item))}</td><td>{Esc(item.RemoteAddress)}:{item.RemotePort}</td><td>{Esc(item.State)}</td></tr>";
+        $"<tr><td>{RenderProcessIdentity(item.ProcessId, null, item.Process)}</td><td>{Esc(NetworkResolver.DisplayHostLabel(item))}</td><td>{Esc(item.RemoteAddress)}:{item.RemotePort}</td><td>{Esc(item.State)}</td></tr>";
+
+    private static string RenderProcessRow(ProcessRecord process)
+    {
+        var created = process.CreationDate?.ToString("O", CultureInfo.InvariantCulture) ?? "";
+        var command = string.IsNullOrWhiteSpace(process.CommandLine)
+            ? process.ExecutablePath ?? ""
+            : process.CommandLine;
+        return $"<tr><td>{process.ProcessId}</td><td>{process.ParentProcessId}</td><td>{Esc(created)}</td><td>{Esc(process.FirstSeen.ToString("O", CultureInfo.InvariantCulture))}</td><td>{Esc(process.LastSeen.ToString("O", CultureInfo.InvariantCulture))}</td><td>{Esc(process.Name)}</td><td><code>{Esc(ShortHash(process.CommandLineHash))}</code></td><td><code>{Esc(command)}</code></td></tr>";
+    }
+
+    private static string RenderProcessIdentity(int? processId, string? processName, ProcessIdentity? identity)
+    {
+        if (identity is null)
+        {
+            return processId is null
+                ? "<span class=\"muted\">unknown</span>"
+                : $"PID {processId}<br><span class=\"muted\">{Esc(processName ?? "identity unavailable")}</span>";
+        }
+
+        var created = identity.CreationTime?.ToString("O", CultureInfo.InvariantCulture) ?? "unknown creation";
+        var exe = string.IsNullOrWhiteSpace(identity.ExePath) ? "unknown exe" : identity.ExePath;
+        return $"""
+            PID {identity.Pid} / PPID {identity.ParentPid}<br>
+            <span class="muted">created {Esc(created)}</span><br>
+            <code>{Esc(exe)}</code><br>
+            <span class="muted">cmd {Esc(ShortHash(identity.CommandLineHash))}, seen {Esc(identity.FirstSeen.ToString("T", CultureInfo.InvariantCulture))}-{Esc(identity.LastSeen.ToString("T", CultureInfo.InvariantCulture))}</span>
+            """;
+    }
 
     private static string RenderNetworkDestinationRow(NetworkDestinationSummary item)
     {
@@ -437,6 +465,11 @@ internal static class HtmlReport
         file.Kind == FileEventKind.Renamed && !string.IsNullOrWhiteSpace(file.RelatedRelativePath)
             ? $"{file.RelativePath} -> {file.RelatedRelativePath}"
             : file.RelativePath;
+
+    private static string ShortHash(string? hash) =>
+        string.IsNullOrWhiteSpace(hash)
+            ? "none"
+            : hash[..Math.Min(12, hash.Length)];
 
     private static string NormalizeVisiblePath(string path)
     {

@@ -14,7 +14,8 @@ internal sealed record FileEvent(
     DateTimeOffset ObservedAt,
     int? ProcessId,
     string? ProcessName,
-    string? RelatedPath)
+    string? RelatedPath,
+    ProcessIdentity? Process = null)
 {
     public static FileEvent Created(string path, FileState current) =>
         New(FileEventKind.Created, path, null, current.Size, current.Size, null, current.LastWriteUtc, "snapshot");
@@ -55,7 +56,8 @@ internal sealed record FileEvent(
             observedAt ?? DateTimeOffset.Now,
             processId,
             processName,
-            relatedPath);
+            relatedPath,
+            null);
 }
 
 internal enum FileEventKind
@@ -135,7 +137,8 @@ internal static class FileEventMerger
                 Source = "normalized",
                 ObservedAt = firstWrite.ObservedAt,
                 ProcessId = firstWrite.ProcessId,
-                ProcessName = firstWrite.ProcessName
+                ProcessName = firstWrite.ProcessName,
+                Process = firstWrite.Process
             });
         }
 

@@ -5,7 +5,7 @@ internal static class CsvReport
     public static string RenderFiles(IReadOnlyList<FileEvent> events)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("kind,source,observed_at,process_id,process_name,category,size_before,size_after,size_delta,is_sensitive,path,related_path");
+        builder.AppendLine("kind,source,observed_at,process_id,process_name,process_parent_id,process_creation_time,process_exe_path,process_command_line_hash,process_first_seen,process_last_seen,category,size_before,size_after,size_delta,is_sensitive,path,related_path");
         foreach (var item in events)
         {
             builder.AppendLine(string.Join(",", [
@@ -14,6 +14,12 @@ internal static class CsvReport
                 Csv(item.ObservedAt.ToString("O", CultureInfo.InvariantCulture)),
                 Csv(item.ProcessId?.ToString(CultureInfo.InvariantCulture) ?? ""),
                 Csv(item.ProcessName ?? ""),
+                Csv(item.Process?.ParentPid.ToString(CultureInfo.InvariantCulture) ?? ""),
+                Csv(item.Process?.CreationTime?.ToString("O", CultureInfo.InvariantCulture) ?? ""),
+                Csv(item.Process?.ExePath ?? ""),
+                Csv(item.Process?.CommandLineHash ?? ""),
+                Csv(item.Process?.FirstSeen.ToString("O", CultureInfo.InvariantCulture) ?? ""),
+                Csv(item.Process?.LastSeen.ToString("O", CultureInfo.InvariantCulture) ?? ""),
                 Csv(item.Category),
                 Csv(item.SizeBefore?.ToString(CultureInfo.InvariantCulture) ?? ""),
                 Csv(item.SizeAfter?.ToString(CultureInfo.InvariantCulture) ?? ""),

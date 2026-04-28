@@ -19,6 +19,7 @@ Working now:
 - grouped network destination/process summaries
 - full-app summary layer with `Big Picture` and `Activity Buckets`
 - report-visible capture settings, including disabled file-read capture
+- process identity snapshots on file/network events for stronger attribution
 - HTML / JSON / CSV / SQLite outputs
 - AI-oriented report sections
 - test project with passing normalization and summary fixtures

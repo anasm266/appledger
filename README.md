@@ -21,11 +21,13 @@ Current Phase 1 capabilities:
 - enrich network endpoints with cached DNS / reverse lookup hostnames when possible
 - capture command lines from the observed process tree
 - detect common startup `Run` and `RunOnce` registry changes
+- summarize whole-app sessions with a top-level "Big Picture" and activity buckets
 - persist sessions as JSON and SQLite
 - regenerate reports from `session.json` or `session.sqlite`
 - generate AI-session sections for project file changes, developer commands, sensitive access, and process timeline
 - normalize rename targets in regenerated reports and display renames as `old -> new`
 - group `.git` internals and runtime bookkeeping out of the main report tables
+- control large sessions with `--no-reads`, `--max-events <n>`, and `--no-sqlite`
 
 Generated artifacts:
 
@@ -60,6 +62,12 @@ The best current recording modes are:
 - `--watch-all` for "what did this app touch anywhere"
 - `--watch <path>` for "what changed in this repo/folder"
 - both together if you want whole-app activity plus a cleaner project diff
+
+The best current control flags for noisy sessions are:
+
+- `--no-reads` to drop the highest-volume ETW category
+- `--max-events <n>` to stop once the session reaches a live event cap
+- `--no-sqlite` to skip `session.sqlite` when you only want HTML/JSON/CSV
 
 ## Quick Start
 
@@ -107,6 +115,8 @@ Record the full app, not just one watched root:
 ```powershell
 .\artifacts\publish-test\appledger.exe attach 40396 `
   --watch-all `
+  --no-reads `
+  --max-events 50000 `
   --out artifacts\codex-full `
   --timeout 300
 ```
@@ -117,6 +127,8 @@ Record the full app and also keep a repo snapshot diff:
 .\artifacts\publish-test\appledger.exe attach 40396 `
   --watch-all `
   --watch "C:\Users\Anas\Documents\New project 8" `
+  --no-reads `
+  --max-events 50000 `
   --out artifacts\codex-full `
   --timeout 300
 ```
@@ -142,9 +154,9 @@ dotnet run --project src\AppLedger.Cli -- diff before.json after.json
 ```text
 appledger apps [search]
 appledger ps [search]
-appledger run <app name|alias|exe> [--args "<arguments>"] [--watch <path>] [--watch-all] [--out <dir>] [--timeout <seconds>]
-appledger attach <pid|process search> [--watch <path>] [--watch-all] [--out <dir>] [--timeout <seconds>]
-appledger report <session.json|session.sqlite> [--out <dir>]
+appledger run <app name|alias|exe> [--args "<arguments>"] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
+appledger attach <pid|process search> [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
+appledger report <session.json|session.sqlite> [--out <dir>] [--no-sqlite]
 appledger snapshot <output.json> --watch <path>
 appledger diff <before.json> <after.json>
 ```
@@ -178,6 +190,8 @@ dotnet run --project src\AppLedger.Cli -- ps codex
 .\artifacts\publish-test\appledger.exe attach 40396 `
   --watch-all `
   --watch "C:\Users\Anas\Documents\New project 8" `
+  --no-reads `
+  --max-events 50000 `
   --out artifacts\codex-full `
   --timeout 300
 ```
@@ -193,6 +207,7 @@ What the report can now surface for AI sessions:
 - outbound endpoints with hostname enrichment when available
 - grouped process activity
 - whole-app temp/cache churn vs project changes
+- first-screen session summary via `Big Picture` and `Activity Buckets`
 
 ## Known Limits
 
@@ -210,7 +225,7 @@ What still needs refinement:
 
 - some file-create attribution still depends on normalization rather than a perfect live ETW create event for every path
 - DNS correlation is opportunistic, not guaranteed for every endpoint
-- full-app mode still produces very large event volumes and needs better first-screen summarization
+- full-app mode still produces very large event volumes and will benefit from more path filtering controls
 - command classification is intentionally pragmatic and should keep being refined against real app sessions
 
 ## Status
@@ -229,6 +244,8 @@ Recent Phase 1 progress:
 - `--watch-all` whole-app live capture
 - rename destination synthesis in regenerated reports
 - DNS/hostname enrichment in network output
+- `Big Picture` and `Activity Buckets` summary layer
+- large-session capture controls: `--no-reads`, `--max-events`, `--no-sqlite`
 
 ## Roadmap
 

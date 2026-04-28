@@ -14,14 +14,18 @@ Current Phase 1 capabilities:
 - attach to an already-running app with `attach`
 - discover easy app aliases with `apps`
 - search running processes with `ps`
+- record whole-app live file activity with `--watch-all`
 - capture live file and process events with ETW when run elevated
 - fall back to before/after watched-folder snapshots when ETW is unavailable
 - sample IPv4 TCP endpoints by process ID
+- enrich network endpoints with cached DNS / reverse lookup hostnames when possible
 - capture command lines from the observed process tree
 - detect common startup `Run` and `RunOnce` registry changes
 - persist sessions as JSON and SQLite
 - regenerate reports from `session.json` or `session.sqlite`
 - generate AI-session sections for project file changes, developer commands, sensitive access, and process timeline
+- normalize rename targets in regenerated reports and display renames as `old -> new`
+- group `.git` internals and runtime bookkeeping out of the main report tables
 
 Generated artifacts:
 
@@ -51,6 +55,12 @@ When ETW is unavailable, AppLedger still records a useful session by:
 
 The report also normalizes some raw event noise into something closer to user intent. For example, a file that was clearly created during the session and then written to is reported as a created file instead of a split `snapshot created` plus `ETW modified` story.
 
+The best current recording modes are:
+
+- `--watch-all` for "what did this app touch anywhere"
+- `--watch <path>` for "what changed in this repo/folder"
+- both together if you want whole-app activity plus a cleaner project diff
+
 ## Quick Start
 
 Prerequisites:
@@ -66,10 +76,16 @@ dotnet run --project src\AppLedger.Cli -- apps code
 dotnet run --project src\AppLedger.Cli -- apps cursor
 ```
 
+For day-to-day testing, prefer the published binary:
+
+```powershell
+dotnet publish src\AppLedger.Cli\AppLedger.Cli.csproj -c Release -o artifacts\publish-test
+```
+
 Record an app you launch:
 
 ```powershell
-dotnet run --project src\AppLedger.Cli -- run code `
+.\artifacts\publish-test\appledger.exe run code `
   --watch "C:\Users\Anas\Projects\demo-app" `
   --out artifacts\vscode-session `
   --timeout 300
@@ -80,16 +96,35 @@ Attach to an app that is already running:
 ```powershell
 dotnet run --project src\AppLedger.Cli -- ps codex
 
-dotnet run --project src\AppLedger.Cli -- attach 20376 `
+.\artifacts\publish-test\appledger.exe attach 40396 `
   --watch "C:\Users\Anas\Documents\New project 8" `
   --out artifacts\codex-self `
+  --timeout 300
+```
+
+Record the full app, not just one watched root:
+
+```powershell
+.\artifacts\publish-test\appledger.exe attach 40396 `
+  --watch-all `
+  --out artifacts\codex-full `
+  --timeout 300
+```
+
+Record the full app and also keep a repo snapshot diff:
+
+```powershell
+.\artifacts\publish-test\appledger.exe attach 40396 `
+  --watch-all `
+  --watch "C:\Users\Anas\Documents\New project 8" `
+  --out artifacts\codex-full `
   --timeout 300
 ```
 
 Regenerate a report from a saved session:
 
 ```powershell
-dotnet run --project src\AppLedger.Cli -- report artifacts\codex-self\session.sqlite `
+.\artifacts\publish-test\appledger.exe report artifacts\codex-self\session.sqlite `
   --out artifacts\codex-self-regenerated
 ```
 
@@ -107,8 +142,8 @@ dotnet run --project src\AppLedger.Cli -- diff before.json after.json
 ```text
 appledger apps [search]
 appledger ps [search]
-appledger run <app name|alias|exe> [--args "<arguments>"] [--watch <path>] [--out <dir>] [--timeout <seconds>]
-appledger attach <pid|process search> [--watch <path>] [--out <dir>] [--timeout <seconds>]
+appledger run <app name|alias|exe> [--args "<arguments>"] [--watch <path>] [--watch-all] [--out <dir>] [--timeout <seconds>]
+appledger attach <pid|process search> [--watch <path>] [--watch-all] [--out <dir>] [--timeout <seconds>]
 appledger report <session.json|session.sqlite> [--out <dir>]
 appledger snapshot <output.json> --watch <path>
 appledger diff <before.json> <after.json>
@@ -140,9 +175,10 @@ dotnet run --project src\AppLedger.Cli -- ps codex
 2. Attach to the root PID from an elevated terminal:
 
 ```powershell
-dotnet run --project src\AppLedger.Cli -- attach 20376 `
+.\artifacts\publish-test\appledger.exe attach 40396 `
+  --watch-all `
   --watch "C:\Users\Anas\Documents\New project 8" `
-  --out artifacts\codex-self `
+  --out artifacts\codex-full `
   --timeout 300
 ```
 
@@ -154,14 +190,14 @@ What the report can now surface for AI sessions:
 - shell and git commands
 - sensitive file access such as `.env`
 - rename and delete activity
-- sampled outbound endpoints
+- outbound endpoints with hostname enrichment when available
 - grouped process activity
+- whole-app temp/cache churn vs project changes
 
 ## Known Limits
 
 What is not done yet:
 
-- DNS/domain correlation for network endpoints
 - network byte counts
 - packet contents
 - broad registry diffs beyond current startup keys
@@ -172,8 +208,9 @@ What is not done yet:
 
 What still needs refinement:
 
-- rename destination synthesis is still partial, so rename targets can still appear as snapshot-created files
 - some file-create attribution still depends on normalization rather than a perfect live ETW create event for every path
+- DNS correlation is opportunistic, not guaranteed for every endpoint
+- full-app mode still produces very large event volumes and needs better first-screen summarization
 - command classification is intentionally pragmatic and should keep being refined against real app sessions
 
 ## Status
@@ -188,6 +225,10 @@ Recent Phase 1 progress:
 - delete and rename attribution working in elevated mode
 - sensitive finding dedupe
 - created-file lifecycle normalization in regenerated reports
+- `.git` and runtime-noise grouping in reports
+- `--watch-all` whole-app live capture
+- rename destination synthesis in regenerated reports
+- DNS/hostname enrichment in network output
 
 ## Roadmap
 

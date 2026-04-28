@@ -2352,7 +2352,8 @@ internal sealed record SessionReport(
     IReadOnlyList<Finding> Findings,
     IReadOnlyList<FolderImpact> TopFolders,
     AiCodingActivity? AiActivity,
-    IReadOnlyList<string> SnapshotErrors)
+    IReadOnlyList<string> SnapshotErrors,
+    SessionActivityOverview? ActivityOverview = null)
 {
     public static SessionReport Build(
         string app,
@@ -2373,6 +2374,7 @@ internal sealed record SessionReport(
         var topFolders = BuildFolderImpact(normalizedFileEvents);
         var findings = Analyzer.Find(normalizedFileEvents, processes, normalizedNetworkEvents, registryEvents, topFolders);
         var aiActivity = AiCodingAnalyzer.Build(watchRoots, normalizedFileEvents, processes);
+        var activityOverview = SessionActivityAnalyzer.Build(watchRoots, watchAll, normalizedFileEvents, normalizedNetworkEvents, aiActivity, findings);
         var summary = new SessionSummary(
             normalizedFileEvents.Count(e => e.Kind == FileEventKind.Read),
             normalizedFileEvents.Count(e => e.Kind == FileEventKind.Created),
@@ -2401,7 +2403,8 @@ internal sealed record SessionReport(
             findings,
             topFolders,
             aiActivity,
-            before.Errors.Concat(after.Errors).Distinct().Take(200).ToList());
+            before.Errors.Concat(after.Errors).Distinct().Take(200).ToList(),
+            activityOverview);
     }
 
     public static SessionReport RefreshDerivedData(SessionReport session)
@@ -2411,6 +2414,7 @@ internal sealed record SessionReport(
         var topFolders = BuildFolderImpact(normalizedFileEvents);
         var findings = Analyzer.Find(normalizedFileEvents, session.Processes, normalizedNetworkEvents, session.RegistryEvents, topFolders);
         var aiActivity = AiCodingAnalyzer.Build(session.WatchRoots, normalizedFileEvents, session.Processes);
+        var activityOverview = SessionActivityAnalyzer.Build(session.WatchRoots, session.WatchAll, normalizedFileEvents, normalizedNetworkEvents, aiActivity, findings);
         var summary = new SessionSummary(
             normalizedFileEvents.Count(e => e.Kind == FileEventKind.Read),
             normalizedFileEvents.Count(e => e.Kind == FileEventKind.Created),
@@ -2431,7 +2435,8 @@ internal sealed record SessionReport(
             NetworkEvents = normalizedNetworkEvents,
             Findings = findings,
             TopFolders = topFolders,
-            AiActivity = aiActivity
+            AiActivity = aiActivity,
+            ActivityOverview = activityOverview
         };
     }
 
@@ -2464,6 +2469,20 @@ internal sealed record SessionSummary(
     int NetworkConnectionCount,
     int RegistryChangeCount,
     int RiskObservationCount);
+
+internal sealed record SessionActivityOverview(
+    string Headline,
+    IReadOnlyList<string> Highlights,
+    IReadOnlyList<ActivityBucketSummary> Buckets);
+
+internal sealed record ActivityBucketSummary(
+    string Key,
+    string Label,
+    string Description,
+    int EventCount,
+    int UniquePathCount,
+    long BytesChanged,
+    IReadOnlyList<string> Examples);
 
 internal sealed record FolderImpact(string Path, int FileCount, long BytesAdded, string Category);
 
@@ -2909,6 +2928,329 @@ internal static class AiCodingAnalyzer
     }
 }
 
+internal static class SessionActivityAnalyzer
+{
+    public static SessionActivityOverview Build(
+        IReadOnlyList<string> watchRoots,
+        bool watchAll,
+        IReadOnlyList<FileEvent> files,
+        IReadOnlyList<NetworkEvent> networkEvents,
+        AiCodingActivity ai,
+        IReadOnlyList<Finding> findings)
+    {
+        var writes = files
+            .Where(file => file.Kind is FileEventKind.Created or FileEventKind.Modified or FileEventKind.Deleted or FileEventKind.Renamed)
+            .ToList();
+
+        var buckets = new List<ActivityBucketSummary>();
+
+        var appDataBucket = BuildFileBucket(
+            "app-data-cache",
+            "App Data / Cache",
+            "Writes under roaming/local app data.",
+            writes.Where(file => file.Category == "app-data"));
+        AddBucket(buckets, appDataBucket);
+
+        var tempBucket = BuildFileBucket(
+            "temp-churn",
+            "Temp Churn",
+            "Writes under temp folders.",
+            writes.Where(file => file.Category == "temp"));
+        AddBucket(buckets, tempBucket);
+
+        var workspaceBucket = BuildFileBucket(
+            "workspace",
+            "Project / User Files",
+            watchRoots.Count > 0
+                ? "Writes under watched roots and user-facing folders."
+                : "Writes under documents, desktop, and downloads.",
+            writes.Where(file => IsWorkspaceFile(file, watchRoots)));
+        AddBucket(buckets, workspaceBucket);
+
+        var gitBucket = BuildFileBucket(
+            "git-metadata",
+            "Git Metadata",
+            "Internal .git activity summarized separately from project files.",
+            writes.Where(file => IsGitPath(file.Path) || (!string.IsNullOrWhiteSpace(file.RelatedPath) && IsGitPath(file.RelatedPath))));
+        AddBucket(buckets, gitBucket);
+
+        var runtimeBucket = BuildFileBucket(
+            "system-runtime",
+            "System / Runtime",
+            "Framework and runtime bookkeeping activity.",
+            writes.Where(file => PathClassifier.IsSystemRuntimeNoise(file.Path) || (!string.IsNullOrWhiteSpace(file.RelatedPath) && PathClassifier.IsSystemRuntimeNoise(file.RelatedPath))));
+        AddBucket(buckets, runtimeBucket);
+
+        var sensitiveBucket = BuildSensitiveBucket(files);
+        AddBucket(buckets, sensitiveBucket);
+
+        var networkBucket = BuildNetworkBucket(networkEvents);
+        AddBucket(buckets, networkBucket);
+
+        buckets = buckets
+            .OrderByDescending(bucket => BucketRank(bucket.Key))
+            .ThenByDescending(bucket => bucket.EventCount)
+            .ThenBy(bucket => bucket.Label, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var highlights = BuildHighlights(watchAll, ai, findings, buckets);
+        var headline = BuildHeadline(ai, findings, buckets, networkEvents.Count);
+
+        return new SessionActivityOverview(headline, highlights, buckets);
+    }
+
+    private static ActivityBucketSummary? BuildFileBucket(string key, string label, string description, IEnumerable<FileEvent> source)
+    {
+        var entries = source.ToList();
+        if (entries.Count == 0)
+        {
+            return null;
+        }
+
+        var examples = entries
+            .Select(file => DescribePathForSummary(EffectivePath(file)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(4)
+            .ToList();
+
+        return new ActivityBucketSummary(
+            key,
+            label,
+            description,
+            entries.Count,
+            entries.Select(file => NormalizeSummaryPath(EffectivePath(file))).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+            entries.Where(file => file.Kind != FileEventKind.Deleted).Sum(file => Math.Max(0, file.SizeDelta)),
+            examples);
+    }
+
+    private static ActivityBucketSummary? BuildSensitiveBucket(IReadOnlyList<FileEvent> files)
+    {
+        var entries = files
+            .Where(file => file.IsSensitive)
+            .ToList();
+
+        if (entries.Count == 0)
+        {
+            return null;
+        }
+
+        var examples = entries
+            .Select(file => DescribePathForSummary(file.Path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(4)
+            .ToList();
+
+        return new ActivityBucketSummary(
+            "sensitive-paths",
+            "Sensitive Paths",
+            "Reads or writes touching sensitive config or secret-like paths.",
+            entries.Count,
+            entries.Select(file => NormalizeSummaryPath(file.Path)).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+            0,
+            examples);
+    }
+
+    private static ActivityBucketSummary? BuildNetworkBucket(IReadOnlyList<NetworkEvent> networkEvents)
+    {
+        if (networkEvents.Count == 0)
+        {
+            return null;
+        }
+
+        var examples = networkEvents
+            .Select(NetworkResolver.DisplayHost)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(4)
+            .ToList();
+
+        return new ActivityBucketSummary(
+            "network",
+            "Network Destinations",
+            "Distinct remote endpoints contacted by the session process tree.",
+            networkEvents.Count,
+            networkEvents.Select(item => $"{NetworkResolver.DisplayHost(item)}:{item.RemotePort}").Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+            0,
+            examples);
+    }
+
+    private static List<string> BuildHighlights(bool watchAll, AiCodingActivity ai, IReadOnlyList<Finding> findings, IReadOnlyList<ActivityBucketSummary> buckets)
+    {
+        var highlights = new List<string>();
+
+        if (watchAll)
+        {
+            var topBucket = buckets
+                .Where(bucket => bucket.Key is not "network" and not "sensitive-paths")
+                .OrderByDescending(bucket => bucket.EventCount)
+                .ThenByDescending(bucket => bucket.UniquePathCount)
+                .FirstOrDefault();
+
+            if (topBucket is not null)
+            {
+                highlights.Add($"Most activity was {topBucket.Label.ToLowerInvariant()} ({topBucket.EventCount:N0} events).");
+            }
+        }
+
+        if (ai.ProjectChanges.TotalChanged > 0)
+        {
+            highlights.Add($"Changed {ai.ProjectChanges.TotalChanged:N0} project files.");
+        }
+
+        if (ai.Commands.GitCommands > 0)
+        {
+            highlights.Add($"Ran {ai.Commands.GitCommands:N0} git commands.");
+        }
+
+        if (ai.Commands.PackageInstalls > 0)
+        {
+            highlights.Add($"Installed packages {ai.Commands.PackageInstalls:N0} time(s).");
+        }
+
+        if (ai.SensitiveAccesses.Count > 0)
+        {
+            highlights.Add($"Touched {ai.SensitiveAccesses.Count:N0} sensitive path event(s).");
+        }
+
+        if (findings.Count(f => f.Severity is "high" or "medium") > 0)
+        {
+            highlights.Add($"Raised {findings.Count(f => f.Severity is "high" or "medium"):N0} medium/high finding(s).");
+        }
+
+        if (buckets.Any(bucket => bucket.Key == "network"))
+        {
+            var network = buckets.First(bucket => bucket.Key == "network");
+            highlights.Add($"Contacted {network.UniquePathCount:N0} network endpoint(s).");
+        }
+
+        return highlights.Take(5).ToList();
+    }
+
+    private static string BuildHeadline(AiCodingActivity ai, IReadOnlyList<Finding> findings, IReadOnlyList<ActivityBucketSummary> buckets, int networkCount)
+    {
+        var topBucket = buckets
+            .Where(bucket => bucket.Key is not "network" and not "sensitive-paths")
+            .OrderByDescending(bucket => bucket.EventCount)
+            .ThenByDescending(bucket => bucket.UniquePathCount)
+            .FirstOrDefault();
+
+        var parts = new List<string>();
+
+        if (topBucket is not null)
+        {
+            parts.Add($"Mostly {topBucket.Label.ToLowerInvariant()}");
+        }
+
+        if (ai.ProjectChanges.TotalChanged > 0)
+        {
+            parts.Add($"changed {ai.ProjectChanges.TotalChanged:N0} project files");
+        }
+
+        if (ai.Commands.GitCommands > 0)
+        {
+            parts.Add($"ran {ai.Commands.GitCommands:N0} git commands");
+        }
+        else if (ai.Commands.Total > 0)
+        {
+            parts.Add($"ran {ai.Commands.Total:N0} developer commands");
+        }
+
+        if (ai.SensitiveAccesses.Count > 0 || findings.Any(f => f.Title.Contains("Sensitive path", StringComparison.OrdinalIgnoreCase)))
+        {
+            parts.Add("touched sensitive paths");
+        }
+
+        if (networkCount > 0)
+        {
+            parts.Add($"contacted {networkCount:N0} network endpoint(s)");
+        }
+
+        if (parts.Count == 0)
+        {
+            return "No high-signal activity summary was derived from this session.";
+        }
+
+        return string.Join(", ", parts) + ".";
+    }
+
+    private static bool IsWorkspaceFile(FileEvent file, IReadOnlyList<string> watchRoots)
+    {
+        var effectivePath = EffectivePath(file);
+        if (string.IsNullOrWhiteSpace(effectivePath))
+        {
+            return false;
+        }
+
+        if (IsGitPath(effectivePath) || PathClassifier.IsSystemRuntimeNoise(effectivePath))
+        {
+            return false;
+        }
+
+        if (watchRoots.Count > 0 && PathClassifier.IsUnderAnyWatchRoot(effectivePath, watchRoots))
+        {
+            return true;
+        }
+
+        var category = PathClassifier.Classify(effectivePath);
+        return category is "documents" or "desktop" or "downloads";
+    }
+
+    private static string EffectivePath(FileEvent file) =>
+        file.Kind == FileEventKind.Renamed && !string.IsNullOrWhiteSpace(file.RelatedPath)
+            ? file.RelatedPath!
+            : file.Path;
+
+    private static void AddBucket(List<ActivityBucketSummary> buckets, ActivityBucketSummary? bucket)
+    {
+        if (bucket is not null)
+        {
+            buckets.Add(bucket);
+        }
+    }
+
+    private static int BucketRank(string key) => key switch
+    {
+        "workspace" => 100,
+        "sensitive-paths" => 95,
+        "app-data-cache" => 90,
+        "temp-churn" => 80,
+        "git-metadata" => 70,
+        "system-runtime" => 60,
+        "network" => 50,
+        _ => 0
+    };
+
+    private static bool IsGitPath(string path) =>
+        path.Replace('/', '\\').Contains("\\.git\\", StringComparison.OrdinalIgnoreCase);
+
+    private static string DescribePathForSummary(string path)
+    {
+        var normalized = path.Replace('/', '\\');
+        if (normalized.Contains("\\.git\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return HtmlReport.DescribeGitInternalPath(path);
+        }
+
+        if (PathClassifier.IsSystemRuntimeNoise(path))
+        {
+            return HtmlReport.DescribeSystemRuntimePath(path);
+        }
+
+        return normalized;
+    }
+
+    private static string NormalizeSummaryPath(string path)
+    {
+        try
+        {
+            return Path.GetFullPath(path).TrimEnd('\\');
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return path;
+        }
+    }
+}
+
 internal static class SessionOutputs
 {
     public static async Task<IReadOnlyList<string>> WriteAsync(SessionReport session, string outputDirectory, JsonSerializerOptions jsonOptions)
@@ -3083,6 +3425,7 @@ internal static class HtmlReport
     {
         var ai = AiCodingAnalyzer.Build(session.WatchRoots, session.FileEvents, session.Processes);
         var appName = WebUtility.HtmlEncode(Path.GetFileName(session.App));
+        var activityOverview = session.ActivityOverview ?? SessionActivityAnalyzer.Build(session.WatchRoots, session.WatchAll, session.FileEvents, session.NetworkEvents, ai, session.Findings);
         var rows = string.Join(Environment.NewLine, VisibleFileEvents(session.FileEvents).Select(RenderFileRow));
         var processes = string.Join(Environment.NewLine, session.Processes.Select(p => $"<tr><td>{p.ProcessId}</td><td>{Esc(p.Name)}</td><td>{Esc(p.CommandLine ?? "")}</td></tr>"));
         var network = string.Join(Environment.NewLine, session.NetworkEvents.Take(200).Select(RenderNetworkRow));
@@ -3097,6 +3440,8 @@ internal static class HtmlReport
         var gitMetadataExamples = string.Join(Environment.NewLine, gitMetadata.Examples.Select(example => $"<li><code>{Esc(example)}</code></li>"));
         var runtimeNoise = SummarizeSystemRuntimeActivity(session.FileEvents);
         var runtimeNoiseExamples = string.Join(Environment.NewLine, runtimeNoise.Examples.Select(example => $"<li><code>{Esc(example)}</code></li>"));
+        var activityHighlights = string.Join(Environment.NewLine, activityOverview.Highlights.Select(highlight => $"<li>{Esc(highlight)}</li>"));
+        var activityBuckets = string.Join(Environment.NewLine, activityOverview.Buckets.Select(RenderActivityBucket));
 
         return $$"""
         <!doctype html>
@@ -3147,6 +3492,19 @@ internal static class HtmlReport
               <div class="metric"><strong>{{Format.Bytes(session.Summary.BytesAddedOrChanged)}}</strong><span>added or changed</span></div>
               <div class="metric"><strong>{{session.Summary.CommandCount:N0}}</strong><span>commands captured</span></div>
               <div class="metric"><strong>{{session.Summary.NetworkConnectionCount:N0}}</strong><span>network endpoints</span></div>
+            </section>
+
+            <section>
+              <h2>Big Picture</h2>
+              <div class="panel"><div style="padding:16px 18px;">
+                <p><strong>{{Esc(activityOverview.Headline)}}</strong></p>
+                {{(activityOverview.Highlights.Count == 0 ? "<p class=\"muted\">No extra highlights were derived for this session.</p>" : $"<ul>{activityHighlights}</ul>")}}
+              </div></div>
+            </section>
+
+            <section>
+              <h2>Activity Buckets</h2>
+              {{(activityOverview.Buckets.Count == 0 ? "<p class=\"muted\">No bucket summary was derived for this session.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Bucket</th><th>Events</th><th>Unique Paths</th><th>Bytes</th><th>Examples</th></tr></thead><tbody>{activityBuckets}</tbody></table></div>")}}
             </section>
 
             <section>
@@ -3274,6 +3632,15 @@ internal static class HtmlReport
     private static string RenderNetworkRow(NetworkEvent item) =>
         $"<tr><td>{item.ProcessId}</td><td>{Esc(NetworkResolver.DisplayHost(item))}</td><td>{Esc(item.RemoteAddress)}:{item.RemotePort}</td><td>{Esc(item.State)}</td></tr>";
 
+    private static string RenderActivityBucket(ActivityBucketSummary bucket)
+    {
+        var examples = bucket.Examples.Count == 0
+            ? "<span class=\"muted\">None</span>"
+            : string.Join("<br>", bucket.Examples.Select(example => $"<code>{Esc(example)}</code>"));
+
+        return $"<tr><td><strong>{Esc(bucket.Label)}</strong><br><span class=\"muted\">{Esc(bucket.Description)}</span></td><td>{bucket.EventCount:N0}</td><td>{bucket.UniquePathCount:N0}</td><td>{Format.Bytes(bucket.BytesChanged)}</td><td>{examples}</td></tr>";
+    }
+
     private static IEnumerable<FileEvent> VisibleFileEvents(IReadOnlyList<FileEvent> events)
     {
         var writes = events
@@ -3353,7 +3720,7 @@ internal static class HtmlReport
     private static bool IsGitInternalPath(string path) =>
         path.Replace('/', '\\').Contains("\\.git\\", StringComparison.OrdinalIgnoreCase);
 
-    private static string DescribeGitInternalPath(string path)
+    internal static string DescribeGitInternalPath(string path)
     {
         var normalized = path.Replace('/', '\\');
         var gitIndex = normalized.IndexOf("\\.git\\", StringComparison.OrdinalIgnoreCase);
@@ -3381,7 +3748,7 @@ internal static class HtmlReport
         return relative;
     }
 
-    private static string DescribeSystemRuntimePath(string path)
+    internal static string DescribeSystemRuntimePath(string path)
     {
         var normalized = path.Replace('/', '\\');
         var breadcrumb = "\\ProgramData\\Microsoft\\NetFramework\\BreadcrumbStore\\";

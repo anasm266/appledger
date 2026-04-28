@@ -9,7 +9,7 @@ internal static class ProcessCatalog
             return Find(null).FirstOrDefault(process => process.ProcessId == pid) ?? TryReadByPid(pid);
         }
 
-        return Find(query).FirstOrDefault();
+        return SelectBestRoot(query, Find(query).ToList());
     }
 
     public static IEnumerable<ProcessRecord> Find(string? query)
@@ -46,6 +46,52 @@ internal static class ProcessCatalog
         if (process.ExecutablePath?.EndsWith(query + ".exe", StringComparison.OrdinalIgnoreCase) == true) return 3;
         if (process.Name.StartsWith(query, StringComparison.OrdinalIgnoreCase)) return 4;
         return 5;
+    }
+
+    internal static ProcessRecord? SelectBestRoot(string query, IReadOnlyList<ProcessRecord> matches)
+    {
+        if (matches.Count == 0)
+        {
+            return null;
+        }
+
+        var matchedPids = matches
+            .Select(process => process.ProcessId)
+            .ToHashSet();
+
+        return matches
+            .OrderBy(process => matchedPids.Contains(process.ParentProcessId) ? 1 : 0)
+            .ThenBy(process => Score(process, query))
+            .ThenByDescending(process => CountDescendants(process.ProcessId, matches))
+            .ThenBy(process => process.ProcessId)
+            .FirstOrDefault();
+    }
+
+    private static int CountDescendants(int rootPid, IReadOnlyList<ProcessRecord> processes)
+    {
+        var childrenByParent = processes
+            .GroupBy(process => process.ParentProcessId)
+            .ToDictionary(group => group.Key, group => group.Select(process => process.ProcessId).ToList());
+        var count = 0;
+        var pending = new Stack<int>();
+        pending.Push(rootPid);
+
+        while (pending.Count > 0)
+        {
+            var parent = pending.Pop();
+            if (!childrenByParent.TryGetValue(parent, out var children))
+            {
+                continue;
+            }
+
+            foreach (var child in children)
+            {
+                count++;
+                pending.Push(child);
+            }
+        }
+
+        return count;
     }
 
     private static ProcessRecord? TryReadByPid(int pid)

@@ -25,6 +25,21 @@ public sealed class NormalizationTests
     }
 
     [Fact]
+    public void ProcessCatalog_SelectBestRoot_PrefersRootOfMatchingProcessTree()
+    {
+        var root = new ProcessRecord(400, 10, "Codex.exe", @"C:\Program Files\Codex\Codex.exe", "Codex.exe", At(1), At(1), At(2));
+        var child = new ProcessRecord(100, 400, "Codex.exe", @"C:\Program Files\Codex\Codex.exe", "Codex.exe --type=renderer", At(2), At(2), At(3));
+        var agent = new ProcessRecord(200, 400, "codex.exe", @"C:\Program Files\Codex\resources\codex.exe", "codex agent", At(3), At(3), At(4));
+        var tool = new ProcessRecord(300, 200, "node_repl.exe", @"C:\Users\Anas\AppData\Local\OpenAI\Codex\bin\node_repl.exe", "node_repl", At(4), At(4), At(5));
+        var unrelated = new ProcessRecord(50, 1, "appledger.exe", @"C:\repo\appledger.exe", "appledger record codex --watch .", At(5), At(5), At(6));
+
+        var selected = ProcessCatalog.SelectBestRoot("codex", [child, agent, tool, unrelated, root]);
+
+        Assert.NotNull(selected);
+        Assert.Equal(root.ProcessId, selected.ProcessId);
+    }
+
+    [Fact]
     public void NormalizeForSession_PromotesSnapshotCreateWithLiveModify()
     {
         var path = @"C:\Users\Anas\Documents\demo\created.txt";

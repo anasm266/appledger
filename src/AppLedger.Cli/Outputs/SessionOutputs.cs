@@ -41,8 +41,8 @@ internal static class SessionStore
         Execute(connection, transaction, """
             CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE processes (process_id INTEGER, parent_process_id INTEGER, name TEXT, executable_path TEXT, command_line TEXT, command_line_hash TEXT, creation_time TEXT, first_seen TEXT, last_seen TEXT);
-            CREATE TABLE file_events (kind TEXT, path TEXT, category TEXT, source TEXT, observed_at TEXT, process_id INTEGER, process_name TEXT, process_parent_id INTEGER, process_creation_time TEXT, process_exe_path TEXT, process_command_line_hash TEXT, process_first_seen TEXT, process_last_seen TEXT, size_delta INTEGER, is_sensitive INTEGER, related_path TEXT);
-            CREATE TABLE network_events (process_id INTEGER, process_parent_id INTEGER, process_creation_time TEXT, process_exe_path TEXT, process_command_line_hash TEXT, process_first_seen TEXT, process_last_seen TEXT, local_address TEXT, local_port INTEGER, remote_address TEXT, remote_port INTEGER, state TEXT, first_seen TEXT, remote_host TEXT);
+            CREATE TABLE file_events (kind TEXT, path TEXT, category TEXT, source TEXT, observed_at TEXT, process_id INTEGER, process_name TEXT, process_parent_id INTEGER, process_creation_time TEXT, process_instance_key TEXT, process_exe_path TEXT, process_command_line_hash TEXT, process_first_seen TEXT, process_last_seen TEXT, attribution_confidence TEXT, attribution_reason TEXT, size_delta INTEGER, is_sensitive INTEGER, related_path TEXT);
+            CREATE TABLE network_events (process_id INTEGER, process_parent_id INTEGER, process_creation_time TEXT, process_instance_key TEXT, process_exe_path TEXT, process_command_line_hash TEXT, process_first_seen TEXT, process_last_seen TEXT, attribution_confidence TEXT, attribution_reason TEXT, local_address TEXT, local_port INTEGER, remote_address TEXT, remote_port INTEGER, state TEXT, first_seen TEXT, remote_host TEXT);
             CREATE TABLE registry_events (kind TEXT, key TEXT, before_value TEXT, after_value TEXT);
             CREATE TABLE findings (severity TEXT, title TEXT, detail TEXT);
             """);
@@ -71,7 +71,7 @@ internal static class SessionStore
 
         foreach (var file in session.FileEvents)
         {
-            Insert(connection, transaction, "INSERT INTO file_events VALUES ($kind, $path, $category, $source, $observed, $pid, $pname, $ppid, $pcreated, $pexe, $pcmdhash, $pfirst, $plast, $delta, $sensitive, $related)", new()
+            Insert(connection, transaction, "INSERT INTO file_events VALUES ($kind, $path, $category, $source, $observed, $pid, $pname, $ppid, $pcreated, $pkey, $pexe, $pcmdhash, $pfirst, $plast, $aconf, $areason, $delta, $sensitive, $related)", new()
             {
                 ["$kind"] = file.Kind.ToString(),
                 ["$path"] = file.Path,
@@ -82,10 +82,13 @@ internal static class SessionStore
                 ["$pname"] = file.ProcessName,
                 ["$ppid"] = file.Process?.ParentPid,
                 ["$pcreated"] = file.Process?.CreationTime?.ToString("O", CultureInfo.InvariantCulture),
+                ["$pkey"] = file.Process?.ProcessInstanceKey,
                 ["$pexe"] = file.Process?.ExePath,
                 ["$pcmdhash"] = file.Process?.CommandLineHash,
                 ["$pfirst"] = file.Process?.FirstSeen.ToString("O", CultureInfo.InvariantCulture),
                 ["$plast"] = file.Process?.LastSeen.ToString("O", CultureInfo.InvariantCulture),
+                ["$aconf"] = file.Attribution?.Confidence.ToString(),
+                ["$areason"] = file.Attribution?.Reason,
                 ["$delta"] = file.SizeDelta,
                 ["$sensitive"] = file.IsSensitive ? 1 : 0,
                 ["$related"] = file.RelatedPath
@@ -94,15 +97,18 @@ internal static class SessionStore
 
         foreach (var item in session.NetworkEvents)
         {
-            Insert(connection, transaction, "INSERT INTO network_events VALUES ($pid, $ppid, $pcreated, $pexe, $pcmdhash, $pfirst, $plast, $local, $lport, $remote, $rport, $state, $first, $host)", new()
+            Insert(connection, transaction, "INSERT INTO network_events VALUES ($pid, $ppid, $pcreated, $pkey, $pexe, $pcmdhash, $pfirst, $plast, $aconf, $areason, $local, $lport, $remote, $rport, $state, $first, $host)", new()
             {
                 ["$pid"] = item.ProcessId,
                 ["$ppid"] = item.Process?.ParentPid,
                 ["$pcreated"] = item.Process?.CreationTime?.ToString("O", CultureInfo.InvariantCulture),
+                ["$pkey"] = item.Process?.ProcessInstanceKey,
                 ["$pexe"] = item.Process?.ExePath,
                 ["$pcmdhash"] = item.Process?.CommandLineHash,
                 ["$pfirst"] = item.Process?.FirstSeen.ToString("O", CultureInfo.InvariantCulture),
                 ["$plast"] = item.Process?.LastSeen.ToString("O", CultureInfo.InvariantCulture),
+                ["$aconf"] = item.Attribution?.Confidence.ToString(),
+                ["$areason"] = item.Attribution?.Reason,
                 ["$local"] = item.LocalAddress,
                 ["$lport"] = item.LocalPort,
                 ["$remote"] = item.RemoteAddress,

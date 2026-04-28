@@ -36,6 +36,7 @@ Implemented:
 - first-screen whole-app summary via `Big Picture` and `Activity Buckets`
 - capture settings displayed in reports so disabled categories are clear
 - process identity snapshots attached to file and network events for attribution
+- attribution confidence and reason attached to file/network events
 - large-session controls: `--no-reads`, `--max-events`, `--no-sqlite`
 - fixture-driven tests for normalization and summary logic
 
@@ -56,6 +57,7 @@ Recent Phase 1 fixes:
 - Program.cs reduced to command orchestration, with collector/analyzer/reporting code moved into focused files
 - reports distinguish disabled file reads from observed zero file reads
 - process identity fields added across JSON, CSV, SQLite, and HTML report output
+- attribution quality summary added to reports
 
 Current proof point:
 
@@ -71,7 +73,7 @@ and grouped process activity.
 Still rough or incomplete:
 
 - some file create attribution still relies on normalization instead of perfect live ETW creates
-- PID reuse is not fully solved yet; event attribution now carries PID plus process identity fields, but long-session PID/start-time semantics still need more hardening
+- PID reuse is not fully solved yet; event attribution now carries PID plus process identity fields and confidence levels, but live collector membership should move further toward process-instance keys
 - hostname correlation is opportunistic, not guaranteed for every endpoint
 - command parsing is pragmatic, not exhaustive
 - registry coverage is narrow

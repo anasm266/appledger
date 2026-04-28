@@ -234,18 +234,76 @@ public sealed class NormalizationTests
 
         var enrichedFile = Assert.Single(session.FileEvents);
         Assert.NotNull(enrichedFile.Process);
+        Assert.NotNull(enrichedFile.Attribution);
         Assert.Equal(123, enrichedFile.Process.Pid);
         Assert.Equal(45, enrichedFile.Process.ParentPid);
         Assert.Equal(At(66), enrichedFile.Process.CreationTime);
         Assert.Equal(process.ExecutablePath, enrichedFile.Process.ExePath);
         Assert.Equal(process.CommandLineHash, enrichedFile.Process.CommandLineHash);
+        Assert.Equal(process.ProcessInstanceKey, enrichedFile.Process.ProcessInstanceKey);
         Assert.Equal(At(66), enrichedFile.Process.FirstSeen);
         Assert.Equal(At(70), enrichedFile.Process.LastSeen);
+        Assert.Equal(AttributionConfidence.High, enrichedFile.Attribution.Confidence);
 
         var enrichedNetwork = Assert.Single(session.NetworkEvents);
         Assert.NotNull(enrichedNetwork.Process);
+        Assert.NotNull(enrichedNetwork.Attribution);
         Assert.Equal(123, enrichedNetwork.Process.Pid);
         Assert.Equal(process.CommandLineHash, enrichedNetwork.Process.CommandLineHash);
+        Assert.Equal(AttributionConfidence.High, enrichedNetwork.Attribution.Confidence);
+    }
+
+    [Fact]
+    public void SessionReport_UsesMediumAttributionWhenCreationTimeIsUnavailable()
+    {
+        var process = new ProcessRecord(321, 45, "tool.exe", null, "tool.exe", null, At(70), At(72));
+        var file = Live(FileEventKind.Modified, @"C:\Users\Anas\Documents\repo\medium.txt", observedAt: At(71), processId: 321, processName: "tool.exe");
+
+        var session = SessionReport.Build(
+            "tool.exe",
+            "",
+            At(70),
+            At(72),
+            [],
+            true,
+            EmptySnapshot(),
+            EmptySnapshot(),
+            [file],
+            [process],
+            [],
+            []);
+
+        var enriched = Assert.Single(session.FileEvents);
+        Assert.NotNull(enriched.Attribution);
+        Assert.Equal(AttributionConfidence.Medium, enriched.Attribution.Confidence);
+        Assert.Contains("creation time was unavailable", enriched.Attribution.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void SessionReport_UsesLowAttributionForPidReuseStyleFallback()
+    {
+        var earlier = new ProcessRecord(777, 1, "first.exe", @"C:\first.exe", "first", At(1), At(1), At(2));
+        var later = new ProcessRecord(777, 1, "second.exe", @"C:\second.exe", "second", At(90), At(90), At(92));
+        var file = Live(FileEventKind.Modified, @"C:\Users\Anas\Documents\repo\low.txt", observedAt: At(50), processId: 777, processName: "unknown.exe");
+
+        var session = SessionReport.Build(
+            "app.exe",
+            "",
+            At(1),
+            At(92),
+            [],
+            true,
+            EmptySnapshot(),
+            EmptySnapshot(),
+            [file],
+            [earlier, later],
+            [],
+            []);
+
+        var enriched = Assert.Single(session.FileEvents);
+        Assert.NotNull(enriched.Attribution);
+        Assert.Equal(AttributionConfidence.Low, enriched.Attribution.Confidence);
+        Assert.Contains("outside the observed event window", enriched.Attribution.Reason, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

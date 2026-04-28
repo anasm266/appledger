@@ -15,7 +15,8 @@ internal sealed record FileEvent(
     int? ProcessId,
     string? ProcessName,
     string? RelatedPath,
-    ProcessIdentity? Process = null)
+    ProcessIdentity? Process = null,
+    Attribution? Attribution = null)
 {
     public static FileEvent Created(string path, FileState current) =>
         New(FileEventKind.Created, path, null, current.Size, current.Size, null, current.LastWriteUtc, "snapshot");
@@ -57,6 +58,7 @@ internal sealed record FileEvent(
             processId,
             processName,
             relatedPath,
+            null,
             null);
 }
 
@@ -138,7 +140,8 @@ internal static class FileEventMerger
                 ObservedAt = firstWrite.ObservedAt,
                 ProcessId = firstWrite.ProcessId,
                 ProcessName = firstWrite.ProcessName,
-                Process = firstWrite.Process
+                Process = firstWrite.Process,
+                Attribution = firstWrite.Attribution
             });
         }
 

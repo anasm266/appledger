@@ -20,6 +20,7 @@ Working now:
 - full-app summary layer with `Big Picture` and `Activity Buckets`
 - report-visible capture settings, including disabled file-read capture
 - process identity snapshots on file/network events for stronger attribution
+- attribution confidence and reason in JSON, CSV, SQLite, and HTML reports
 - HTML / JSON / CSV / SQLite outputs
 - AI-oriented report sections
 - test project with passing normalization and summary fixtures

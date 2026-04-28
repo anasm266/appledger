@@ -27,6 +27,7 @@ Current Phase 1 capabilities:
 - summarize whole-app sessions with a top-level "Big Picture" and activity buckets
 - show capture settings in reports so disabled categories such as file reads are explicit
 - attach process identity snapshots to file and network events for stronger attribution
+- show attribution confidence and reason for file/network events
 - keep the CLI implementation split by collector, filesystem, analysis, output, and report responsibilities
 - persist sessions as JSON and SQLite
 - regenerate reports from `session.json` or `session.sqlite`
@@ -51,10 +52,19 @@ Attribution fields are included in process records and attached to file/network 
 - `pid`
 - `parent_pid`
 - `creation_time`
+- `process_instance_key`
 - `exe_path`
 - `command_line_hash`
 - `first_seen`
 - `last_seen`
+- `attribution_confidence`
+- `attribution_reason`
+
+Attribution confidence is currently:
+
+- `high` when PID matches a known process instance with creation time and event-window evidence
+- `medium` when PID matches a known session process but creation time is unavailable
+- `low` when AppLedger falls back to a weaker PID/window match or cannot verify the PID
 
 ## Source Layout
 
@@ -281,6 +291,7 @@ Recent Phase 1 progress:
 - grouped network destination/process summaries
 - capture settings shown in reports, including disabled file reads for `ai-code`
 - process identity fields added to JSON, CSV, SQLite, and HTML report views for file/network attribution
+- attribution confidence summary added to the HTML report
 
 ## Roadmap
 

@@ -10,6 +10,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Data.Sqlite;
 using Microsoft.Diagnostics.Tracing.Parsers;
+using Microsoft.Diagnostics.Tracing.Parsers.Kernel;
 using Microsoft.Diagnostics.Tracing.Session;
 using Microsoft.Win32;
 
@@ -383,7 +384,7 @@ internal static class Program
         {
             return Fail($"Could not read session: {input}");
         }
-        session = session with { AiActivity = AiCodingAnalyzer.Build(session.WatchRoots, session.FileEvents, session.Processes) };
+        session = SessionReport.RefreshDerivedData(session);
 
         var output = Cli.GetOption(args, "--out")
             ?? Path.Combine(Path.GetDirectoryName(input) ?? Directory.GetCurrentDirectory(), "regenerated-report");
@@ -1147,12 +1148,29 @@ internal sealed class EtwCollector : IDisposable
             }
         };
 
+        session.Source.Kernel.FileIOCreate += HandleFileCreate;
         session.Source.Kernel.FileIORead += data => AddFile(FileEventKind.Read, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
         session.Source.Kernel.FileIOWrite += data => AddFile(FileEventKind.Modified, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
-        session.Source.Kernel.FileIOFileCreate += data => AddFile(FileEventKind.Created, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
         session.Source.Kernel.FileIOFileDelete += data => AddFile(FileEventKind.Deleted, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
         session.Source.Kernel.FileIODelete += data => AddFile(FileEventKind.Deleted, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
         session.Source.Kernel.FileIORename += data => AddFile(FileEventKind.Renamed, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
+    }
+
+    private void HandleFileCreate(FileIOCreateTraceData data)
+    {
+        var kind = data.CreateDisposition switch
+        {
+            CreateDisposition.CREATE_NEW => FileEventKind.Created,
+            CreateDisposition.CREATE_ALWAYS => FileEventKind.Created,
+            CreateDisposition.SUPERSEDE => FileEventKind.Created,
+            CreateDisposition.TRUNCATE_EXISTING => FileEventKind.Modified,
+            _ => (FileEventKind?)null
+        };
+
+        if (kind is not null)
+        {
+            AddFile(kind.Value, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
+        }
     }
 
     private void AddFile(FileEventKind kind, string? path, int processId, string? processName, DateTime timestamp)
@@ -1186,11 +1204,18 @@ internal sealed class EtwCollector : IDisposable
     {
         if (kind != FileEventKind.Modified)
         {
-            return false;
+            return IsIgnoredGitLockPath(path);
         }
 
         var fileName = Path.GetFileName(path);
-        return string.IsNullOrWhiteSpace(fileName);
+        return string.IsNullOrWhiteSpace(fileName) || IsIgnoredGitLockPath(path);
+    }
+
+    private static bool IsIgnoredGitLockPath(string path)
+    {
+        var normalized = path.Replace('/', '\\');
+        return normalized.Contains("\\.git\\", StringComparison.OrdinalIgnoreCase)
+            && normalized.EndsWith(".lock", StringComparison.OrdinalIgnoreCase);
     }
 }
 
@@ -1864,6 +1889,33 @@ internal sealed record SessionReport(
             before.Errors.Concat(after.Errors).Distinct().Take(200).ToList());
     }
 
+    public static SessionReport RefreshDerivedData(SessionReport session)
+    {
+        var topFolders = BuildFolderImpact(session.FileEvents);
+        var findings = Analyzer.Find(session.FileEvents, session.Processes, session.NetworkEvents, session.RegistryEvents, topFolders);
+        var aiActivity = AiCodingAnalyzer.Build(session.WatchRoots, session.FileEvents, session.Processes);
+        var summary = new SessionSummary(
+            session.FileEvents.Count(e => e.Kind == FileEventKind.Read),
+            session.FileEvents.Count(e => e.Kind == FileEventKind.Created),
+            session.FileEvents.Count(e => e.Kind == FileEventKind.Modified),
+            session.FileEvents.Count(e => e.Kind == FileEventKind.Deleted),
+            session.FileEvents.Count(e => e.Kind == FileEventKind.Renamed),
+            session.FileEvents.Where(e => e.Kind != FileEventKind.Deleted).Sum(e => Math.Max(0, e.SizeDelta)),
+            session.Processes.Count,
+            session.Processes.Count(p => !string.IsNullOrWhiteSpace(p.CommandLine)),
+            session.NetworkEvents.Count,
+            session.RegistryEvents.Count,
+            findings.Count(f => f.Severity is "high" or "medium"));
+
+        return session with
+        {
+            Summary = summary,
+            Findings = findings,
+            TopFolders = topFolders,
+            AiActivity = aiActivity
+        };
+    }
+
     private static List<FolderImpact> BuildFolderImpact(IReadOnlyList<FileEvent> events)
     {
         return events
@@ -1932,9 +1984,17 @@ internal static class Analyzer
     {
         var findings = new List<Finding>();
 
-        foreach (var file in files.Where(f => f.IsSensitive).Take(20))
+        foreach (var group in files
+            .Where(f => f.IsSensitive)
+            .GroupBy(f => NormalizePath(f.Path), StringComparer.OrdinalIgnoreCase)
+            .Take(20))
         {
-            findings.Add(new Finding("medium", "Sensitive path changed", $"{file.Kind} {file.Path}"));
+            var first = group.OrderBy(file => file.ObservedAt).First();
+            var actions = string.Join(", ", group
+                .Select(file => file.Kind.ToString().ToLowerInvariant())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(action => action, StringComparer.OrdinalIgnoreCase));
+            findings.Add(new Finding("medium", "Sensitive path touched", $"{actions} {first.Path}"));
         }
 
         foreach (var process in processes.Where(p => p.CommandLine?.Contains("ExecutionPolicy Bypass", StringComparison.OrdinalIgnoreCase) == true))
@@ -1963,6 +2023,18 @@ internal static class Analyzer
         }
 
         return findings;
+    }
+
+    private static string NormalizePath(string path)
+    {
+        try
+        {
+            return Path.GetFullPath(path).TrimEnd('\\');
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return path;
+        }
     }
 
     private static bool IsPackageInstall(string? commandLine)
@@ -2319,7 +2391,7 @@ internal static class SessionOutputs
     public static async Task<IReadOnlyList<string>> WriteAsync(SessionReport session, string outputDirectory, JsonSerializerOptions jsonOptions)
     {
         Directory.CreateDirectory(outputDirectory);
-        session = session with { AiActivity = AiCodingAnalyzer.Build(session.WatchRoots, session.FileEvents, session.Processes) };
+        session = SessionReport.RefreshDerivedData(session);
 
         var jsonPath = Path.Combine(outputDirectory, "session.json");
         var htmlPath = Path.Combine(outputDirectory, "report.html");

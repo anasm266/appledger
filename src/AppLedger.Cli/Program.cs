@@ -8,6 +8,9 @@ using System.Security;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Data.Sqlite;
+using Microsoft.Diagnostics.Tracing.Parsers;
+using Microsoft.Diagnostics.Tracing.Session;
 using Microsoft.Win32;
 
 namespace AppLedger;
@@ -34,6 +37,7 @@ internal static class Program
             {
                 "run" => await RunAsync(args.Skip(1).ToArray()),
                 "apps" => Apps(args.Skip(1).ToArray()),
+                "report" => await ReportAsync(args.Skip(1).ToArray()),
                 "snapshot" => Snapshot(args.Skip(1).ToArray()),
                 "diff" => Diff(args.Skip(1).ToArray()),
                 _ => Fail($"Unknown command: {args[0]}")
@@ -67,6 +71,16 @@ internal static class Program
         var registryBefore = RegistrySnapshot.Capture();
 
         using var stop = new CancellationTokenSource();
+        using var etwCollector = EtwCollector.TryStart(options.WatchRoots);
+        if (etwCollector.IsRunning)
+        {
+            Console.WriteLine("ETW:       live kernel file/process capture enabled");
+        }
+        else if (!string.IsNullOrWhiteSpace(etwCollector.Status))
+        {
+            Console.WriteLine($"ETW:       unavailable ({etwCollector.Status})");
+        }
+
         Console.CancelKeyPress += (_, e) =>
         {
             e.Cancel = true;
@@ -95,6 +109,7 @@ internal static class Program
 
         var startedAt = DateTimeOffset.Now;
         var processSampler = new ProcessSampler(process.Id, options.Target, options.AppArguments);
+        etwCollector.AttachSession(process.Id, processSampler);
         var networkSampler = new NetworkSampler();
 
         Console.WriteLine($"Recording PID {process.Id}. Press Ctrl+C to stop.");
@@ -123,11 +138,13 @@ internal static class Program
         }
 
         var endedAt = DateTimeOffset.Now;
+        etwCollector.Stop();
         Console.WriteLine("Taking after snapshot...");
         var after = FileSnapshot.Capture(options.WatchRoots);
         var registryAfter = RegistrySnapshot.Capture();
 
-        var fileEvents = FileDiff.Compare(before, after);
+        var fileEvents = FileEventMerger.Merge(etwCollector.FileEvents, FileDiff.Compare(before, after));
+        processSampler.Merge(etwCollector.Processes);
         var registryEvents = RegistrySnapshot.Compare(registryBefore, registryAfter);
         var session = SessionReport.Build(
             options.Target,
@@ -142,34 +159,28 @@ internal static class Program
             networkSampler.Events.OrderBy(e => e.FirstSeen).ToList(),
             registryEvents);
 
-        var jsonPath = Path.Combine(options.OutputDirectory, "session.json");
-        var htmlPath = Path.Combine(options.OutputDirectory, "report.html");
-        var csvPath = Path.Combine(options.OutputDirectory, "touched-files.csv");
-        var commandsPath = Path.Combine(options.OutputDirectory, "commands.json");
-        var cleanupPath = Path.Combine(options.OutputDirectory, "cleanup.ps1");
-
-        await File.WriteAllTextAsync(jsonPath, JsonSerializer.Serialize(session, JsonOptions), Encoding.UTF8);
-        await File.WriteAllTextAsync(htmlPath, HtmlReport.Render(session), Encoding.UTF8);
-        await File.WriteAllTextAsync(csvPath, CsvReport.RenderFiles(session.FileEvents), Encoding.UTF8);
-        await File.WriteAllTextAsync(commandsPath, JsonSerializer.Serialize(session.Processes.Where(p => !string.IsNullOrWhiteSpace(p.CommandLine)), JsonOptions), Encoding.UTF8);
-        await File.WriteAllTextAsync(cleanupPath, CleanupScript.Render(session), Encoding.UTF8);
+        var outputs = (await SessionOutputs.WriteAsync(session, options.OutputDirectory, JsonOptions)).ToList();
+        var sqlitePath = Path.Combine(options.OutputDirectory, "session.sqlite");
+        SessionStore.Write(sqlitePath, session);
+        outputs.Add(sqlitePath);
 
         Console.WriteLine();
         Console.WriteLine($"AppLedger Report: {Path.GetFileNameWithoutExtension(options.Target)}");
         Console.WriteLine($"  Files created:  {session.Summary.FilesCreated}");
         Console.WriteLine($"  Files modified: {session.Summary.FilesModified}");
         Console.WriteLine($"  Files deleted:  {session.Summary.FilesDeleted}");
+        Console.WriteLine($"  File reads:     {session.Summary.FilesRead}");
+        Console.WriteLine($"  File renames:   {session.Summary.FilesRenamed}");
         Console.WriteLine($"  Processes:      {session.Processes.Count}");
         Console.WriteLine($"  Commands:       {session.Processes.Count(p => !string.IsNullOrWhiteSpace(p.CommandLine))}");
         Console.WriteLine($"  Connections:    {session.NetworkEvents.Count}");
         Console.WriteLine($"  Findings:       {session.Findings.Count}");
         Console.WriteLine();
         Console.WriteLine("Generated:");
-        Console.WriteLine($"  {htmlPath}");
-        Console.WriteLine($"  {jsonPath}");
-        Console.WriteLine($"  {csvPath}");
-        Console.WriteLine($"  {commandsPath}");
-        Console.WriteLine($"  {cleanupPath}");
+        foreach (var output in outputs)
+        {
+            Console.WriteLine($"  {output}");
+        }
 
         return 0;
     }
@@ -192,6 +203,44 @@ internal static class Program
         foreach (var app in apps)
         {
             Console.WriteLine($"{app.Name,-34} {app.Path}");
+        }
+
+        return 0;
+    }
+
+    private static async Task<int> ReportAsync(string[] args)
+    {
+        if (args.Length == 0)
+        {
+            return Fail("Usage: appledger report <session.json|session.sqlite> [--out <dir>]");
+        }
+
+        var input = Path.GetFullPath(Environment.ExpandEnvironmentVariables(args[0].Trim('"')));
+        if (!File.Exists(input))
+        {
+            return Fail($"Session file does not exist: {input}");
+        }
+
+        var session = Path.GetExtension(input).Equals(".sqlite", StringComparison.OrdinalIgnoreCase)
+            ? SessionStore.Read(input)
+            : JsonSerializer.Deserialize<SessionReport>(File.ReadAllText(input), JsonOptions);
+        if (session is null)
+        {
+            return Fail($"Could not read session: {input}");
+        }
+
+        var output = Cli.GetOption(args, "--out")
+            ?? Path.Combine(Path.GetDirectoryName(input) ?? Directory.GetCurrentDirectory(), "regenerated-report");
+        output = Path.GetFullPath(Environment.ExpandEnvironmentVariables(output));
+
+        var outputs = (await SessionOutputs.WriteAsync(session, output, JsonOptions)).ToList();
+        var sqlitePath = Path.Combine(output, "session.sqlite");
+        SessionStore.Write(sqlitePath, session);
+        outputs.Add(sqlitePath);
+        Console.WriteLine("Generated:");
+        foreach (var path in outputs)
+        {
+            Console.WriteLine($"  {path}");
         }
 
         return 0;
@@ -255,6 +304,7 @@ internal static class Program
         Usage:
           appledger apps [search]
           appledger run <app name|alias|exe> [--args "<arguments>"] [--watch <path>] [--out <dir>] [--timeout <seconds>]
+          appledger report <session.json|session.sqlite> [--out <dir>]
           appledger snapshot <output.json> --watch <path>
           appledger diff <before.json> <after.json>
 
@@ -265,8 +315,8 @@ internal static class Program
           appledger run "C:\Path\To\Code.exe" --watch "C:\Users\Anas\Projects\demo-app"
 
         Notes:
-          v0 records process trees and command lines live, samples IPv4 TCP connections,
-          and uses before/after snapshots for created, modified, and deleted files.
+          Phase 1 uses live ETW file/process capture when elevated, samples IPv4 TCP
+          connections, and keeps before/after snapshots as a fallback.
         """);
     }
 }
@@ -491,32 +541,102 @@ internal sealed record FileEvent(
     DateTime? LastWriteBeforeUtc,
     DateTime? LastWriteAfterUtc,
     string Category,
-    bool IsSensitive)
+    bool IsSensitive,
+    string Source,
+    DateTimeOffset ObservedAt,
+    int? ProcessId,
+    string? ProcessName,
+    string? RelatedPath)
 {
     public static FileEvent Created(string path, FileState current) =>
-        New(FileEventKind.Created, path, null, current.Size, current.Size, null, current.LastWriteUtc);
+        New(FileEventKind.Created, path, null, current.Size, current.Size, null, current.LastWriteUtc, "snapshot");
 
     public static FileEvent Modified(string path, FileState previous, FileState current) =>
-        New(FileEventKind.Modified, path, previous.Size, current.Size, current.Size - previous.Size, previous.LastWriteUtc, current.LastWriteUtc);
+        New(FileEventKind.Modified, path, previous.Size, current.Size, current.Size - previous.Size, previous.LastWriteUtc, current.LastWriteUtc, "snapshot");
 
     public static FileEvent Deleted(string path, FileState previous) =>
-        New(FileEventKind.Deleted, path, previous.Size, null, -previous.Size, previous.LastWriteUtc, null);
+        New(FileEventKind.Deleted, path, previous.Size, null, -previous.Size, previous.LastWriteUtc, null, "snapshot");
 
-    private static FileEvent New(FileEventKind kind, string path, long? before, long? after, long delta, DateTime? beforeTime, DateTime? afterTime) =>
-        new(kind, path, before, after, delta, beforeTime, afterTime, PathClassifier.Classify(path), PathClassifier.IsSensitive(path));
+    public static FileEvent Live(FileEventKind kind, string path, int processId, string? processName, string? relatedPath = null) =>
+        New(kind, path, null, null, 0, null, null, "etw", DateTimeOffset.Now, processId, processName, relatedPath);
+
+    private static FileEvent New(
+        FileEventKind kind,
+        string path,
+        long? before,
+        long? after,
+        long delta,
+        DateTime? beforeTime,
+        DateTime? afterTime,
+        string source,
+        DateTimeOffset? observedAt = null,
+        int? processId = null,
+        string? processName = null,
+        string? relatedPath = null) =>
+        new(
+            kind,
+            path,
+            before,
+            after,
+            delta,
+            beforeTime,
+            afterTime,
+            PathClassifier.Classify(path),
+            PathClassifier.IsSensitive(path),
+            source,
+            observedAt ?? DateTimeOffset.Now,
+            processId,
+            processName,
+            relatedPath);
 }
 
 internal enum FileEventKind
 {
+    Read,
     Created,
     Modified,
-    Deleted
+    Deleted,
+    Renamed
+}
+
+internal static class FileEventMerger
+{
+    public static List<FileEvent> Merge(IReadOnlyList<FileEvent> liveEvents, IReadOnlyList<FileEvent> snapshotEvents)
+    {
+        if (liveEvents.Count == 0)
+        {
+            return snapshotEvents.ToList();
+        }
+
+        var merged = new List<FileEvent>(liveEvents);
+        var liveWriteKeys = liveEvents
+            .Where(e => e.Kind is FileEventKind.Created or FileEventKind.Modified or FileEventKind.Deleted or FileEventKind.Renamed)
+            .Select(e => $"{e.Kind}|{Normalize(e.Path)}")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var snapshot in snapshotEvents)
+        {
+            var key = $"{snapshot.Kind}|{Normalize(snapshot.Path)}";
+            if (!liveWriteKeys.Contains(key))
+            {
+                merged.Add(snapshot);
+            }
+        }
+
+        return merged
+            .OrderBy(e => e.ObservedAt)
+            .ThenBy(e => e.Path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static string Normalize(string path) => Path.GetFullPath(path).TrimEnd('\\');
 }
 
 internal sealed class ProcessSampler
 {
     private readonly int _rootPid;
     private readonly HashSet<int> _sessionPids = [];
+    private readonly object _lock = new();
 
     public ProcessSampler(int rootPid, string target, string arguments)
     {
@@ -535,20 +655,53 @@ internal sealed class ProcessSampler
 
     public ConcurrentDictionary<int, ProcessRecord> Processes { get; } = new();
 
-    public IReadOnlySet<int> SessionProcessIds => _sessionPids;
+    public IReadOnlySet<int> SessionProcessIds
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _sessionPids.ToHashSet();
+            }
+        }
+    }
+
+    public bool ContainsProcess(int pid)
+    {
+        lock (_lock)
+        {
+            return _sessionPids.Contains(pid);
+        }
+    }
+
+    public void Observe(ProcessRecord record)
+    {
+        lock (_lock)
+        {
+            if (record.ProcessId == _rootPid || _sessionPids.Contains(record.ParentProcessId))
+            {
+                _sessionPids.Add(record.ProcessId);
+                Processes.AddOrUpdate(
+                    record.ProcessId,
+                    _ => record,
+                    (_, existing) => MergeRecord(existing, record));
+            }
+        }
+    }
+
+    public void Merge(IEnumerable<ProcessRecord> records)
+    {
+        foreach (var record in records)
+        {
+            Observe(record);
+        }
+    }
 
     public void Sample()
     {
         foreach (var observed in WmiProcess.ReadAll())
         {
-            if (observed.ProcessId == _rootPid || _sessionPids.Contains(observed.ParentProcessId))
-            {
-                _sessionPids.Add(observed.ProcessId);
-                Processes.AddOrUpdate(
-                    observed.ProcessId,
-                    _ => observed.ToRecord(),
-                    (_, existing) => existing with { LastSeen = DateTimeOffset.Now });
-            }
+            Observe(observed.ToRecord());
         }
     }
 
@@ -577,6 +730,18 @@ internal sealed class ProcessSampler
 
         return active;
     }
+
+    private static ProcessRecord MergeRecord(ProcessRecord existing, ProcessRecord incoming) =>
+        existing with
+        {
+            ParentProcessId = existing.ParentProcessId == 0 ? incoming.ParentProcessId : existing.ParentProcessId,
+            Name = string.IsNullOrWhiteSpace(existing.Name) ? incoming.Name : existing.Name,
+            ExecutablePath = existing.ExecutablePath ?? incoming.ExecutablePath,
+            CommandLine = existing.CommandLine ?? incoming.CommandLine,
+            CreationDate = existing.CreationDate ?? incoming.CreationDate,
+            FirstSeen = existing.FirstSeen <= incoming.FirstSeen ? existing.FirstSeen : incoming.FirstSeen,
+            LastSeen = existing.LastSeen >= incoming.LastSeen ? existing.LastSeen : incoming.LastSeen
+        };
 }
 
 internal sealed record WmiProcess(
@@ -639,6 +804,143 @@ internal sealed record ProcessRecord(
     DateTimeOffset? CreationDate,
     DateTimeOffset FirstSeen,
     DateTimeOffset LastSeen);
+
+internal sealed class EtwCollector : IDisposable
+{
+    private readonly IReadOnlyList<string> _watchRoots;
+    private readonly ConcurrentDictionary<int, byte> _sessionPids = new();
+    private readonly ConcurrentDictionary<int, ProcessRecord> _processes = new();
+    private readonly ConcurrentQueue<FileEvent> _fileEvents = new();
+    private readonly TraceEventSession? _session;
+    private Task? _processingTask;
+    private ProcessSampler? _processSampler;
+    private volatile bool _disposed;
+
+    private EtwCollector(IReadOnlyList<string> watchRoots, TraceEventSession? session, Task? processingTask, string? status)
+    {
+        _watchRoots = watchRoots;
+        _session = session;
+        _processingTask = processingTask;
+        Status = status;
+    }
+
+    public bool IsRunning => _session is not null;
+
+    public string? Status { get; }
+
+    public IReadOnlyList<FileEvent> FileEvents => _fileEvents.ToArray();
+
+    public IReadOnlyList<ProcessRecord> Processes => _processes.Values.ToArray();
+
+    public static EtwCollector TryStart(IReadOnlyList<string> watchRoots)
+    {
+        if (TraceEventSession.IsElevated() != true)
+        {
+            return new EtwCollector(watchRoots, null, null, "run from an elevated terminal for live ETW file events");
+        }
+
+        try
+        {
+            var session = new TraceEventSession(KernelTraceEventParser.KernelSessionName) { StopOnDispose = true };
+            var collector = new EtwCollector(watchRoots, session, null, null);
+            session.EnableKernelProvider(
+                KernelTraceEventParser.Keywords.Process
+                | KernelTraceEventParser.Keywords.FileIO
+                | KernelTraceEventParser.Keywords.FileIOInit);
+            collector.Configure(session);
+            var task = Task.Run(() =>
+            {
+                try
+                {
+                    session.Source.Process();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Normal during shutdown.
+                }
+            });
+
+            collector._processingTask = task;
+            return collector;
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or InvalidOperationException or COMException)
+        {
+            return new EtwCollector(watchRoots, null, null, ex.Message);
+        }
+    }
+
+    public void AttachSession(int rootPid, ProcessSampler processSampler)
+    {
+        _processSampler = processSampler;
+        _sessionPids[rootPid] = 0;
+    }
+
+    public void Stop()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+
+        try
+        {
+            _session?.Stop();
+            _processingTask?.Wait(TimeSpan.FromSeconds(3));
+        }
+        catch (Exception ex) when (ex is ObjectDisposedException or AggregateException or InvalidOperationException)
+        {
+            // Best-effort shutdown.
+        }
+    }
+
+    public void Dispose()
+    {
+        Stop();
+        _session?.Dispose();
+    }
+
+    private void Configure(TraceEventSession session)
+    {
+        session.Source.Kernel.ProcessStart += data =>
+        {
+            var record = new ProcessRecord(
+                data.ProcessID,
+                data.ParentID,
+                string.IsNullOrWhiteSpace(data.ProcessName) ? Path.GetFileName(data.ImageFileName) : data.ProcessName,
+                data.ImageFileName,
+                data.CommandLine,
+                data.TimeStamp,
+                data.TimeStamp,
+                data.TimeStamp);
+
+            if (_sessionPids.ContainsKey(data.ParentID))
+            {
+                _sessionPids[data.ProcessID] = 0;
+                _processes[data.ProcessID] = record;
+                _processSampler?.Observe(record);
+            }
+        };
+
+        session.Source.Kernel.FileIORead += data => AddFile(FileEventKind.Read, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
+        session.Source.Kernel.FileIOWrite += data => AddFile(FileEventKind.Modified, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
+        session.Source.Kernel.FileIOFileCreate += data => AddFile(FileEventKind.Created, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
+        session.Source.Kernel.FileIOFileDelete += data => AddFile(FileEventKind.Deleted, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
+        session.Source.Kernel.FileIODelete += data => AddFile(FileEventKind.Deleted, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
+        session.Source.Kernel.FileIORename += data => AddFile(FileEventKind.Renamed, data.FileName, data.ProcessID, data.ProcessName, data.TimeStamp);
+    }
+
+    private void AddFile(FileEventKind kind, string? path, int processId, string? processName, DateTime timestamp)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !_sessionPids.ContainsKey(processId) || !PathClassifier.IsUnderAnyWatchRoot(path, _watchRoots))
+        {
+            return;
+        }
+
+        _fileEvents.Enqueue(FileEvent.Live(kind, path, processId, processName) with { ObservedAt = timestamp });
+    }
+}
 
 internal sealed class NetworkSampler
 {
@@ -1128,6 +1430,24 @@ internal static class PathClassifier
             || name.Equals("System Volume Information", StringComparison.OrdinalIgnoreCase);
     }
 
+    public static bool IsUnderAnyWatchRoot(string path, IReadOnlyList<string> roots)
+    {
+        if (path.StartsWith("\\Device\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        foreach (var root in roots)
+        {
+            if (IsUnder(path, root))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static bool IsUnder(string path, string root)
     {
         if (string.IsNullOrWhiteSpace(root))
@@ -1135,9 +1455,16 @@ internal static class PathClassifier
             return false;
         }
 
-        var fullPath = Path.GetFullPath(path).TrimEnd('\\') + "\\";
-        var fullRoot = Path.GetFullPath(root).TrimEnd('\\') + "\\";
-        return fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase);
+        try
+        {
+            var fullPath = Path.GetFullPath(path).TrimEnd('\\') + "\\";
+            var fullRoot = Path.GetFullPath(root).TrimEnd('\\') + "\\";
+            return fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
     }
 }
 
@@ -1172,9 +1499,11 @@ internal sealed record SessionReport(
         var topFolders = BuildFolderImpact(fileEvents);
         var findings = Analyzer.Find(fileEvents, processes, networkEvents, registryEvents, topFolders);
         var summary = new SessionSummary(
+            fileEvents.Count(e => e.Kind == FileEventKind.Read),
             fileEvents.Count(e => e.Kind == FileEventKind.Created),
             fileEvents.Count(e => e.Kind == FileEventKind.Modified),
             fileEvents.Count(e => e.Kind == FileEventKind.Deleted),
+            fileEvents.Count(e => e.Kind == FileEventKind.Renamed),
             fileEvents.Where(e => e.Kind != FileEventKind.Deleted).Sum(e => Math.Max(0, e.SizeDelta)),
             processes.Count,
             processes.Count(p => !string.IsNullOrWhiteSpace(p.CommandLine)),
@@ -1201,7 +1530,7 @@ internal sealed record SessionReport(
     private static List<FolderImpact> BuildFolderImpact(IReadOnlyList<FileEvent> events)
     {
         return events
-            .Where(e => e.Kind is FileEventKind.Created or FileEventKind.Modified)
+            .Where(e => e.Kind is FileEventKind.Created or FileEventKind.Modified or FileEventKind.Renamed)
             .GroupBy(e => Path.GetDirectoryName(e.Path) ?? e.Path, StringComparer.OrdinalIgnoreCase)
             .Select(group => new FolderImpact(
                 group.Key,
@@ -1216,9 +1545,11 @@ internal sealed record SessionReport(
 }
 
 internal sealed record SessionSummary(
+    int FilesRead,
     int FilesCreated,
     int FilesModified,
     int FilesDeleted,
+    int FilesRenamed,
     long BytesAddedOrChanged,
     int ProcessCount,
     int CommandCount,
@@ -1289,6 +1620,164 @@ internal static class Analyzer
     }
 }
 
+internal static class SessionOutputs
+{
+    public static async Task<IReadOnlyList<string>> WriteAsync(SessionReport session, string outputDirectory, JsonSerializerOptions jsonOptions)
+    {
+        Directory.CreateDirectory(outputDirectory);
+
+        var jsonPath = Path.Combine(outputDirectory, "session.json");
+        var htmlPath = Path.Combine(outputDirectory, "report.html");
+        var csvPath = Path.Combine(outputDirectory, "touched-files.csv");
+        var commandsPath = Path.Combine(outputDirectory, "commands.json");
+        var cleanupPath = Path.Combine(outputDirectory, "cleanup.ps1");
+
+        await File.WriteAllTextAsync(jsonPath, JsonSerializer.Serialize(session, jsonOptions), Encoding.UTF8);
+        await File.WriteAllTextAsync(htmlPath, HtmlReport.Render(session), Encoding.UTF8);
+        await File.WriteAllTextAsync(csvPath, CsvReport.RenderFiles(session.FileEvents), Encoding.UTF8);
+        await File.WriteAllTextAsync(commandsPath, JsonSerializer.Serialize(session.Processes.Where(p => !string.IsNullOrWhiteSpace(p.CommandLine)), jsonOptions), Encoding.UTF8);
+        await File.WriteAllTextAsync(cleanupPath, CleanupScript.Render(session), Encoding.UTF8);
+
+        return [htmlPath, jsonPath, csvPath, commandsPath, cleanupPath];
+    }
+}
+
+internal static class SessionStore
+{
+    public static void Write(string path, SessionReport session)
+    {
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+        }
+
+        using var connection = new SqliteConnection($"Data Source={path}");
+        connection.Open();
+
+        Execute(connection, """
+            CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE processes (process_id INTEGER, parent_process_id INTEGER, name TEXT, executable_path TEXT, command_line TEXT, first_seen TEXT, last_seen TEXT);
+            CREATE TABLE file_events (kind TEXT, path TEXT, category TEXT, source TEXT, observed_at TEXT, process_id INTEGER, process_name TEXT, size_delta INTEGER, is_sensitive INTEGER, related_path TEXT);
+            CREATE TABLE network_events (process_id INTEGER, local_address TEXT, local_port INTEGER, remote_address TEXT, remote_port INTEGER, state TEXT, first_seen TEXT);
+            CREATE TABLE registry_events (kind TEXT, key TEXT, before_value TEXT, after_value TEXT);
+            CREATE TABLE findings (severity TEXT, title TEXT, detail TEXT);
+            """);
+
+        Insert(connection, "INSERT INTO metadata(key, value) VALUES ($key, $value)", new()
+        {
+            ["$key"] = "session_json",
+            ["$value"] = JsonSerializer.Serialize(session, ProgramJson.Options)
+        });
+
+        foreach (var process in session.Processes)
+        {
+            Insert(connection, "INSERT INTO processes VALUES ($pid, $parent, $name, $exe, $cmd, $first, $last)", new()
+            {
+                ["$pid"] = process.ProcessId,
+                ["$parent"] = process.ParentProcessId,
+                ["$name"] = process.Name,
+                ["$exe"] = process.ExecutablePath,
+                ["$cmd"] = process.CommandLine,
+                ["$first"] = process.FirstSeen.ToString("O", CultureInfo.InvariantCulture),
+                ["$last"] = process.LastSeen.ToString("O", CultureInfo.InvariantCulture)
+            });
+        }
+
+        foreach (var file in session.FileEvents)
+        {
+            Insert(connection, "INSERT INTO file_events VALUES ($kind, $path, $category, $source, $observed, $pid, $pname, $delta, $sensitive, $related)", new()
+            {
+                ["$kind"] = file.Kind.ToString(),
+                ["$path"] = file.Path,
+                ["$category"] = file.Category,
+                ["$source"] = file.Source,
+                ["$observed"] = file.ObservedAt.ToString("O", CultureInfo.InvariantCulture),
+                ["$pid"] = file.ProcessId,
+                ["$pname"] = file.ProcessName,
+                ["$delta"] = file.SizeDelta,
+                ["$sensitive"] = file.IsSensitive ? 1 : 0,
+                ["$related"] = file.RelatedPath
+            });
+        }
+
+        foreach (var item in session.NetworkEvents)
+        {
+            Insert(connection, "INSERT INTO network_events VALUES ($pid, $local, $lport, $remote, $rport, $state, $first)", new()
+            {
+                ["$pid"] = item.ProcessId,
+                ["$local"] = item.LocalAddress,
+                ["$lport"] = item.LocalPort,
+                ["$remote"] = item.RemoteAddress,
+                ["$rport"] = item.RemotePort,
+                ["$state"] = item.State,
+                ["$first"] = item.FirstSeen.ToString("O", CultureInfo.InvariantCulture)
+            });
+        }
+
+        foreach (var item in session.RegistryEvents)
+        {
+            Insert(connection, "INSERT INTO registry_events VALUES ($kind, $key, $before, $after)", new()
+            {
+                ["$kind"] = item.Kind.ToString(),
+                ["$key"] = item.Key,
+                ["$before"] = item.Before,
+                ["$after"] = item.After
+            });
+        }
+
+        foreach (var finding in session.Findings)
+        {
+            Insert(connection, "INSERT INTO findings VALUES ($severity, $title, $detail)", new()
+            {
+                ["$severity"] = finding.Severity,
+                ["$title"] = finding.Title,
+                ["$detail"] = finding.Detail
+            });
+        }
+    }
+
+    public static SessionReport? Read(string path)
+    {
+        using var connection = new SqliteConnection($"Data Source={path};Mode=ReadOnly");
+        connection.Open();
+
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT value FROM metadata WHERE key = 'session_json'";
+        var value = command.ExecuteScalar() as string;
+        return string.IsNullOrWhiteSpace(value)
+            ? null
+            : JsonSerializer.Deserialize<SessionReport>(value, ProgramJson.Options);
+    }
+
+    private static void Execute(SqliteConnection connection, string sql)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.ExecuteNonQuery();
+    }
+
+    private static void Insert(SqliteConnection connection, string sql, Dictionary<string, object?> values)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        foreach (var (key, value) in values)
+        {
+            command.Parameters.AddWithValue(key, value ?? DBNull.Value);
+        }
+
+        command.ExecuteNonQuery();
+    }
+}
+
+internal static class ProgramJson
+{
+    public static JsonSerializerOptions Options { get; } = new()
+    {
+        WriteIndented = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+}
+
 internal static class HtmlReport
 {
     public static string Render(SessionReport session)
@@ -1336,13 +1825,15 @@ internal static class HtmlReport
         <body>
           <header>
             <h1>AppLedger Report: {{appName}}</h1>
-            <p>{{Esc(session.StartedAt.ToString("g"))}} - {{Esc(session.EndedAt.ToString("g"))}} · {{Esc(string.Join("; ", session.WatchRoots))}}</p>
+            <p>{{Esc(session.StartedAt.ToString("g"))}} - {{Esc(session.EndedAt.ToString("g"))}} - {{Esc(string.Join("; ", session.WatchRoots))}}</p>
           </header>
           <main>
             <section class="grid">
+              <div class="metric"><strong>{{session.Summary.FilesRead:N0}}</strong><span>file reads</span></div>
               <div class="metric"><strong>{{session.Summary.FilesCreated:N0}}</strong><span>files created</span></div>
               <div class="metric"><strong>{{session.Summary.FilesModified:N0}}</strong><span>files modified</span></div>
               <div class="metric"><strong>{{session.Summary.FilesDeleted:N0}}</strong><span>files deleted</span></div>
+              <div class="metric"><strong>{{session.Summary.FilesRenamed:N0}}</strong><span>files renamed</span></div>
               <div class="metric"><strong>{{Format.Bytes(session.Summary.BytesAddedOrChanged)}}</strong><span>added or changed</span></div>
               <div class="metric"><strong>{{session.Summary.CommandCount:N0}}</strong><span>commands captured</span></div>
               <div class="metric"><strong>{{session.Summary.NetworkConnectionCount:N0}}</strong><span>network endpoints</span></div>
@@ -1350,7 +1841,7 @@ internal static class HtmlReport
 
             <section>
               <h2>Risky Observations</h2>
-              {{(session.Findings.Count == 0 ? "<p class=\"muted\">No risky observations from the v0 analyzers.</p>" : $"<ul class=\"findings\">{findings}</ul>")}}
+              {{(session.Findings.Count == 0 ? "<p class=\"muted\">No risky observations from the Phase 1 analyzers.</p>" : $"<ul class=\"findings\">{findings}</ul>")}}
             </section>
 
             <section>
@@ -1360,7 +1851,7 @@ internal static class HtmlReport
 
             <section>
               <h2>Files</h2>
-              <div class="panel"><table><thead><tr><th>Action</th><th>Category</th><th>Delta</th><th>Path</th></tr></thead><tbody>{{rows}}</tbody></table></div>
+              <div class="panel"><table><thead><tr><th>Action</th><th>Source</th><th>PID</th><th>Category</th><th>Delta</th><th>Path</th></tr></thead><tbody>{{rows}}</tbody></table></div>
             </section>
 
             <section>
@@ -1373,7 +1864,7 @@ internal static class HtmlReport
               <div class="panel"><table><thead><tr><th>PID</th><th>Remote</th><th>State</th></tr></thead><tbody>{{network}}</tbody></table></div>
             </section>
 
-            <p class="muted">v0 uses live process/network sampling plus before/after file snapshots. File reads and packet contents are not collected.</p>
+            <p class="muted">Phase 1 uses ETW file/process events when elevated, live process/network sampling, and before/after file snapshots as fallback. Packet contents are not collected.</p>
           </main>
         </body>
         </html>
@@ -1381,7 +1872,7 @@ internal static class HtmlReport
     }
 
     private static string RenderFileRow(FileEvent file) =>
-        $"<tr><td>{Esc(file.Kind.ToString())}</td><td>{Esc(file.Category)}</td><td>{Format.Bytes(file.SizeDelta)}</td><td><code>{Esc(file.Path)}</code></td></tr>";
+        $"<tr><td>{Esc(file.Kind.ToString())}</td><td>{Esc(file.Source)}</td><td>{Esc(file.ProcessId?.ToString(CultureInfo.InvariantCulture) ?? "")}</td><td>{Esc(file.Category)}</td><td>{Format.Bytes(file.SizeDelta)}</td><td><code>{Esc(file.Path)}</code></td></tr>";
 
     private static string Esc(string value) => WebUtility.HtmlEncode(value);
 }
@@ -1391,11 +1882,15 @@ internal static class CsvReport
     public static string RenderFiles(IReadOnlyList<FileEvent> events)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("kind,category,size_before,size_after,size_delta,is_sensitive,path");
+        builder.AppendLine("kind,source,observed_at,process_id,process_name,category,size_before,size_after,size_delta,is_sensitive,path");
         foreach (var item in events)
         {
             builder.AppendLine(string.Join(",", [
                 Csv(item.Kind.ToString()),
+                Csv(item.Source),
+                Csv(item.ObservedAt.ToString("O", CultureInfo.InvariantCulture)),
+                Csv(item.ProcessId?.ToString(CultureInfo.InvariantCulture) ?? ""),
+                Csv(item.ProcessName ?? ""),
                 Csv(item.Category),
                 Csv(item.SizeBefore?.ToString(CultureInfo.InvariantCulture) ?? ""),
                 Csv(item.SizeAfter?.ToString(CultureInfo.InvariantCulture) ?? ""),

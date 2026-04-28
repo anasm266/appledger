@@ -13,14 +13,18 @@ It can:
 - launch an app under recording
 - resolve easy app names like `code`, `cursor`, `chrome`, and `notepad`
 - search recordable apps with `appledger apps [search]`
+- use ETW for live process and file events when run elevated
 - track the launched process and longer-lived child processes through WMI polling
 - capture command lines for observed processes
 - sample IPv4 TCP network endpoints by process ID
 - snapshot watched folders before and after a session
 - detect files created, modified, and deleted in watched folders
+- capture file reads and renames when ETW is available
 - classify paths as app data, temp, documents, downloads, sensitive, project/user files, and similar buckets
 - detect common startup registry key changes
-- generate `report.html`, `session.json`, `touched-files.csv`, `commands.json`, and `cleanup.ps1`
+- persist sessions as JSON and SQLite
+- regenerate reports from `session.json` or `session.sqlite`
+- generate `report.html`, `session.json`, `session.sqlite`, `touched-files.csv`, `commands.json`, and `cleanup.ps1`
 
 Example:
 
@@ -39,13 +43,10 @@ dotnet run --project src\AppLedger.Cli -- diff before.json after.json
 
 ## Current Limits
 
-The main limitation is fidelity. File changes are detected with before/after snapshots, not live ETW file events.
+The main limitation is still fidelity in non-elevated mode. Live ETW file events require elevation, so AppLedger falls back to before/after snapshots when it cannot start a kernel trace session.
 
 The current version does not yet capture:
 
-- file reads
-- exact live file event timeline
-- file renames as first-class events
 - DNS/domain names
 - network byte counts
 - packet contents
@@ -62,15 +63,13 @@ The current version does not yet capture:
 
 Goal: make AppLedger genuinely useful for AI coding app sessions.
 
-Build:
+Status: in progress. The first ETW, SQLite, and report regeneration path is implemented.
 
-- ETW-backed process creation capture
-- ETW-backed file create, modify, rename, and delete events
+Remaining:
+
 - reliable process-tree attribution using PID plus process start time
 - command timeline
-- SQLite session database
 - richer JSON schema
-- report regeneration from saved sessions
 - focused AI coding report sections:
   - changed project files
   - commands run
@@ -222,4 +221,3 @@ AppLedger shows:
 - network calls to api.openai.com, github.com, registry.npmjs.org
 - cleanup available: 240 MB cache
 ```
-

@@ -30,6 +30,8 @@ Current Phase 1 capabilities:
 - capture command lines from the observed process tree
 - detect common startup `Run` and `RunOnce` registry changes
 - summarize whole-app sessions with a top-level "Big Picture" and activity buckets
+- label watched-root changes separately from true source/project intent
+- show byte totals as known bytes because live ETW events often lack size deltas
 - show capture settings in reports so disabled categories such as file reads are explicit
 - attach process identity snapshots to file and network events for stronger attribution
 - show attribution confidence and reason for file/network events
@@ -282,7 +284,7 @@ Path filters run before live events are counted against `--max-events` and befor
 
 What the report can now surface for AI sessions:
 
-- changed project files
+- watched-root changes
 - shell and git commands
 - sensitive file access such as `.env`
 - rename and delete activity
@@ -336,6 +338,7 @@ Recent Phase 1 progress:
 - include/exclude path filters shown in capture settings and applied before event caps
 - app-specific AI profiles for Codex, Claude, Cursor, and VS Code
 - automatic report opening with `--no-open` for scripted runs
+- report wording now distinguishes watched-root changes from source/project files and labels byte totals as known bytes
 - process identity fields added to JSON, CSV, SQLite, and HTML report views for file/network attribution
 - attribution confidence summary added to the HTML report
 

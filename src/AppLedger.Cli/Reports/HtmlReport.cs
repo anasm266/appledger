@@ -28,6 +28,7 @@ internal static class HtmlReport
         var networkProcesses = string.Join(Environment.NewLine, networkOverview.Processes.Select(RenderNetworkProcessRow));
         var captureSettings = session.CaptureSettings ?? SessionCaptureSettings.Default(session.WatchAll);
         var captureSettingsRows = RenderCaptureSettingsRows(captureSettings);
+        var knownBytes = RenderKnownBytes(session);
         var fileReadMetricValue = captureSettings.CaptureReads
             ? session.Summary.FilesRead.ToString("N0", CultureInfo.InvariantCulture)
             : "Off";
@@ -83,10 +84,11 @@ internal static class HtmlReport
               <div class="metric"><strong>{{session.Summary.FilesModified:N0}}</strong><span>files modified</span></div>
               <div class="metric"><strong>{{session.Summary.FilesDeleted:N0}}</strong><span>files deleted</span></div>
               <div class="metric"><strong>{{session.Summary.FilesRenamed:N0}}</strong><span>files renamed</span></div>
-              <div class="metric"><strong>{{Format.Bytes(session.Summary.BytesAddedOrChanged)}}</strong><span>added or changed</span></div>
+              <div class="metric"><strong>{{knownBytes.Value}}</strong><span>{{knownBytes.Label}}</span></div>
               <div class="metric"><strong>{{session.Summary.CommandCount:N0}}</strong><span>commands captured</span></div>
               <div class="metric"><strong>{{session.Summary.NetworkConnectionCount:N0}}</strong><span>network endpoints</span></div>
             </section>
+            {{(knownBytes.ShowNote ? "<p class=\"muted\">Live ETW file events often do not include file-size deltas, so byte totals only include known snapshot or enriched size data.</p>" : "")}}
 
             <section>
               <h2>Capture Settings</h2>
@@ -114,7 +116,7 @@ internal static class HtmlReport
 
             <section>
               <h2>Activity Buckets</h2>
-              {{(activityOverview.Buckets.Count == 0 ? "<p class=\"muted\">No bucket summary was derived for this session.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Bucket</th><th>Events</th><th>Unique Paths</th><th>Bytes</th><th>Examples</th></tr></thead><tbody>{activityBuckets}</tbody></table></div>")}}
+              {{(activityOverview.Buckets.Count == 0 ? "<p class=\"muted\">No bucket summary was derived for this session.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Bucket</th><th>Events</th><th>Unique Paths</th><th>Known Bytes</th><th>Examples</th></tr></thead><tbody>{activityBuckets}</tbody></table></div>")}}
             </section>
 
             <section>
@@ -125,7 +127,7 @@ internal static class HtmlReport
             <section>
               <h2>AI Coding Activity</h2>
               <div class="grid">
-                <div class="metric"><strong>{{ai.ProjectChanges.TotalChanged:N0}}</strong><span>project files changed</span></div>
+                <div class="metric"><strong>{{ai.ProjectChanges.TotalChanged:N0}}</strong><span>watched-root paths changed</span></div>
                 <div class="metric"><strong>{{ai.Commands.PackageInstalls:N0}}</strong><span>package installs</span></div>
                 <div class="metric"><strong>{{ai.Commands.GitCommands:N0}}</strong><span>git commands</span></div>
                 <div class="metric"><strong>{{ai.Commands.TestCommands:N0}}</strong><span>test commands</span></div>
@@ -135,8 +137,8 @@ internal static class HtmlReport
             </section>
 
             <section>
-              <h2>Changed Project Files</h2>
-              {{(ai.ChangedProjectFiles.Count == 0 ? "<p class=\"muted\">No project file changes detected under the watched roots.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Action</th><th>Source</th><th>Category</th><th>Path</th></tr></thead><tbody>{projectFiles}</tbody></table></div>")}}
+              <h2>Watched Root Changes</h2>
+              {{(ai.ChangedProjectFiles.Count == 0 ? "<p class=\"muted\">No watched-root file changes detected.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Action</th><th>Source</th><th>Category</th><th>Path</th></tr></thead><tbody>{projectFiles}</tbody></table></div>")}}
             </section>
 
             <section>
@@ -350,6 +352,28 @@ internal static class HtmlReport
 
         return string.Join(Environment.NewLine, rows.Select(row => $"<tr><th>{Esc(row.Item1)}</th><td>{Esc(row.Item2)}</td></tr>"));
     }
+
+    private static KnownBytesDisplay RenderKnownBytes(SessionReport session)
+    {
+        if (session.Summary.BytesAddedOrChanged > 0)
+        {
+            return new KnownBytesDisplay(Format.Bytes(session.Summary.BytesAddedOrChanged), "known bytes changed", ShowNote: HasUnknownLiveSizeDeltas(session));
+        }
+
+        if (HasUnknownLiveSizeDeltas(session))
+        {
+            return new KnownBytesDisplay("Unknown", "known bytes changed", ShowNote: true);
+        }
+
+        return new KnownBytesDisplay("0 B", "known bytes changed", ShowNote: false);
+    }
+
+    private static bool HasUnknownLiveSizeDeltas(SessionReport session) =>
+        session.FileEvents.Any(file =>
+            file.Source.Equals("etw", StringComparison.OrdinalIgnoreCase)
+            && file.Kind is FileEventKind.Created or FileEventKind.Modified or FileEventKind.Renamed
+            && file.SizeBefore is null
+            && file.SizeAfter is null);
 
     private static AttributionSummary SummarizeAttribution(SessionReport session)
     {
@@ -565,6 +589,8 @@ internal static class HtmlReport
         private double Percent(int value) =>
             Total == 0 ? 0 : value * 100.0 / Total;
     }
+
+    private sealed record KnownBytesDisplay(string Value, string Label, bool ShowNote);
 
     private sealed record GitInternalSummary(int Total, int Created, int Modified, int Deleted, int Renamed, IReadOnlyList<string> Examples);
     private sealed record SystemRuntimeSummary(int Total, int Created, int Modified, int Deleted, int Renamed, IReadOnlyList<string> Examples);

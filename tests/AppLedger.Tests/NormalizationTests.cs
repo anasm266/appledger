@@ -142,6 +142,95 @@ public sealed class NormalizationTests
         Assert.Contains("Mostly temp churn", html, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void NetworkSummaryAnalyzer_GroupsByResolvedHostAndProcess()
+    {
+        var processes = new List<ProcessRecord>
+        {
+            new(100, 0, "git.exe", @"C:\Program Files\Git\bin\git.exe", "git fetch", At(70), At(70), At(71)),
+            new(101, 0, "codex.exe", @"C:\Program Files\OpenAI\codex.exe", "codex", At(70), At(70), At(71))
+        };
+
+        var network = new List<NetworkEvent>
+        {
+            new(100, "127.0.0.1", 12000, "140.82.112.3", 443, "Established", At(70), "lb-140-82-112-3-iad.github.com"),
+            new(101, "127.0.0.1", 12001, "140.82.112.4", 443, "Established", At(71), "lb-140-82-112-3-iad.github.com"),
+            new(101, "127.0.0.1", 12002, "140.82.112.4", 443, "Established", At(72), "lb-140-82-112-3-iad.github.com")
+        };
+
+        var overview = NetworkSummaryAnalyzer.Build(network, processes);
+
+        var destination = Assert.Single(overview.Destinations);
+        Assert.Equal("lb-140-82-112-3-iad.github.com", destination.HostLabel);
+        Assert.Equal(3, destination.ConnectionCount);
+        Assert.Equal(2, destination.ProcessCount);
+        Assert.Contains("git.exe", destination.Processes);
+        Assert.Contains("codex.exe", destination.Processes);
+
+        Assert.Equal(2, overview.Processes.Count);
+        Assert.Contains(overview.Processes, item => item.ProcessName == "codex.exe" && item.ConnectionCount == 2);
+    }
+
+    [Fact]
+    public void NetworkSummaryAnalyzer_UsesUnresolvedLabelForRawIp()
+    {
+        var processes = new List<ProcessRecord>
+        {
+            new(200, 0, "claude.exe", @"C:\Program Files\Claude\claude.exe", "claude", At(80), At(80), At(81))
+        };
+
+        var network = new List<NetworkEvent>
+        {
+            new(200, "127.0.0.1", 13000, "34.54.194.141", 443, "Established", At(80), null)
+        };
+
+        var overview = NetworkSummaryAnalyzer.Build(network, processes);
+
+        var destination = Assert.Single(overview.Destinations);
+        Assert.Equal("34.54.194.141 (unresolved)", destination.HostLabel);
+        Assert.Equal("34.54.194.141", destination.DisplayAddress);
+    }
+
+    [Fact]
+    public void HtmlReport_RendersNetworkSummarySection()
+    {
+        var file = Live(FileEventKind.Modified, @"C:\Users\Anas\AppData\Local\Temp\session.tmp", observedAt: At(90), processId: 10, processName: "codex.exe");
+        var files = FileEventMerger.NormalizeForSession([file]);
+        var overview = SessionActivityAnalyzer.Build([], true, files, [], EmptyAi(), []);
+        var process = new ProcessRecord(10, 0, "codex.exe", @"C:\Program Files\App\App.exe", "\"app.exe\"", At(90), At(90), At(91));
+        var networkEvents = new List<NetworkEvent>
+        {
+            new(10, "127.0.0.1", 14000, "140.82.112.3", 443, "Established", At(91), "lb-140-82-112-3-iad.github.com"),
+            new(10, "127.0.0.1", 14001, "34.54.194.141", 443, "Established", At(92), null)
+        };
+        var networkOverview = NetworkSummaryAnalyzer.Build(networkEvents, [process]);
+
+        var session = new SessionReport(
+            App: @"C:\Program Files\App\App.exe",
+            Arguments: "",
+            StartedAt: At(90),
+            EndedAt: At(91),
+            WatchRoots: [],
+            WatchAll: true,
+            Summary: new SessionSummary(0, 0, 1, 0, 0, 0, 1, 0, 2, 0, 0),
+            FileEvents: files,
+            Processes: [process],
+            NetworkEvents: networkEvents,
+            RegistryEvents: [],
+            Findings: [],
+            TopFolders: [new FolderImpact(@"C:\Users\Anas\AppData\Local\Temp", 1, 0, "temp")],
+            AiActivity: EmptyAi(),
+            SnapshotErrors: [],
+            ActivityOverview: overview,
+            NetworkOverview: networkOverview);
+
+        var html = HtmlReport.Render(session);
+
+        Assert.Contains("Network Summary", html, StringComparison.Ordinal);
+        Assert.Contains("34.54.194.141 (unresolved)", html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("lb-140-82-112-3-iad.github.com", html, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static AiCodingActivity EmptyAi() =>
         new(
             new ProjectChangeSummary(0, 0, 0, 0, 0),

@@ -25,6 +25,7 @@ Implemented:
 - WMI process-tree polling fallback
 - sampled IPv4 TCP endpoint capture
 - cached DNS / reverse lookup hostname enrichment for network output
+- grouped network summary by destination and process
 - startup `Run` / `RunOnce` registry monitoring
 - HTML, JSON, CSV, SQLite, AI activity, and cleanup outputs
 - first-screen whole-app summary via `Big Picture` and `Activity Buckets`
@@ -44,6 +45,7 @@ Recent Phase 1 fixes:
 - full-app report summary layer implemented
 - large-session capture controls implemented
 - test project added and passing against lifecycle / summary fixtures
+- grouped network summary implemented and covered by tests
 
 Current proof point:
 
@@ -70,19 +72,9 @@ These are product polish and fidelity gaps, not viability gaps. The tool is alre
 
 ## Next Up
 
-Immediate next work should stay focused on improving the quality of network interpretation and AI-session presentation.
+Immediate next work should stay focused on making AI desktop app sessions more opinionated and easier to scan.
 
-### 1. Better Network Grouping
-
-Goal: move from "endpoints exist" to "this app talked to these services."
-
-Build:
-
-- group endpoints by hostname and process
-- cleaner network summary cards
-- better unresolved-IP fallback presentation
-
-### 2. Smarter AI Session Report
+### 1. Smarter AI Session Report
 
 Goal: make Codex/Cursor/VS Code/Claude sessions the strongest demo.
 
@@ -102,7 +94,7 @@ Sensitive paths touched: .env
 Shells spawned: PowerShell
 ```
 
-### 3. Include / Exclude Path Filtering
+### 2. Include / Exclude Path Filtering
 
 Goal: let whole-app mode stay broad without being noisy.
 
@@ -112,7 +104,7 @@ Build:
 - `--exclude <path>`
 - likely multiple-use flags
 
-### 4. Better Risk Observations
+### 3. Better Risk Observations
 
 Goal: make the top of the report feel opinionated.
 

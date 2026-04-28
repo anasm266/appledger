@@ -13,6 +13,7 @@ Working now:
 - watched-root snapshot diff
 - ETW file/process capture when elevated
 - sampled network endpoints with hostname enrichment when available
+- grouped network destination/process summaries
 - full-app summary layer with `Big Picture` and `Activity Buckets`
 - HTML / JSON / CSV / SQLite outputs
 - AI-oriented report sections
@@ -26,15 +27,7 @@ Verified against real sessions:
 
 ## Next Execution Order
 
-### 1. Better Network Grouping
-
-Build:
-
-- group endpoints by hostname and process
-- cleaner network summary cards
-- prefer domain-style output in report headings
-
-### 2. Smarter AI Session Profiles
+### 1. Smarter AI Session Profiles
 
 Build first-class summaries for:
 
@@ -43,13 +36,20 @@ Build first-class summaries for:
 - Cursor
 - VS Code
 
-### 3. Include / Exclude Path Filters
+### 2. Include / Exclude Path Filters
 
 Build:
 
 - `--include <path>`
 - `--exclude <path>`
 - multi-use filters for whole-app sessions
+
+### 3. Better Risk Observations
+
+Build:
+
+- more opinionated shell/package/startup findings
+- clearer first-screen severity ordering
 
 ## Not Next
 

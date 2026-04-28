@@ -6,6 +6,7 @@ internal sealed class EtwCollector : IDisposable
     private readonly bool _watchAll;
     private readonly bool _captureReads;
     private readonly int? _maxEvents;
+    private readonly PathFilter _pathFilter;
     private readonly ConcurrentDictionary<int, byte> _sessionPids = new();
     private readonly ConcurrentDictionary<int, ProcessRecord> _processes = new();
     private readonly ConcurrentQueue<FileEvent> _fileEvents = new();
@@ -17,12 +18,13 @@ internal sealed class EtwCollector : IDisposable
     private volatile bool _disposed;
     private int _eventCount;
 
-    private EtwCollector(IReadOnlyList<string> watchRoots, bool watchAll, bool captureReads, int? maxEvents, TraceEventSession? session, Task? processingTask, string? status)
+    private EtwCollector(IReadOnlyList<string> watchRoots, bool watchAll, bool captureReads, int? maxEvents, PathFilter pathFilter, TraceEventSession? session, Task? processingTask, string? status)
     {
         _watchRoots = watchRoots;
         _watchAll = watchAll;
         _captureReads = captureReads;
         _maxEvents = maxEvents;
+        _pathFilter = pathFilter;
         _session = session;
         _processingTask = processingTask;
         Status = status;
@@ -39,16 +41,19 @@ internal sealed class EtwCollector : IDisposable
     public bool HasReachedEventLimit => _maxEvents is not null && Volatile.Read(ref _eventCount) >= _maxEvents.Value;
 
     public static EtwCollector TryStart(IReadOnlyList<string> watchRoots, bool watchAll, bool captureReads, int? maxEvents)
+        => TryStart(watchRoots, watchAll, captureReads, maxEvents, PathFilter.Empty);
+
+    public static EtwCollector TryStart(IReadOnlyList<string> watchRoots, bool watchAll, bool captureReads, int? maxEvents, PathFilter pathFilter)
     {
         if (TraceEventSession.IsElevated() != true)
         {
-            return new EtwCollector(watchRoots, watchAll, captureReads, maxEvents, null, null, "run from an elevated terminal for live ETW file events");
+            return new EtwCollector(watchRoots, watchAll, captureReads, maxEvents, pathFilter, null, null, "run from an elevated terminal for live ETW file events");
         }
 
         try
         {
             var session = new TraceEventSession(KernelTraceEventParser.KernelSessionName) { StopOnDispose = true };
-            var collector = new EtwCollector(watchRoots, watchAll, captureReads, maxEvents, session, null, null);
+            var collector = new EtwCollector(watchRoots, watchAll, captureReads, maxEvents, pathFilter, session, null, null);
             session.EnableKernelProvider(
                 KernelTraceEventParser.Keywords.Process
                 | KernelTraceEventParser.Keywords.FileIO
@@ -71,7 +76,7 @@ internal sealed class EtwCollector : IDisposable
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or InvalidOperationException or COMException)
         {
-            return new EtwCollector(watchRoots, watchAll, captureReads, maxEvents, null, null, ex.Message);
+            return new EtwCollector(watchRoots, watchAll, captureReads, maxEvents, pathFilter, null, null, ex.Message);
         }
     }
 
@@ -237,6 +242,11 @@ internal sealed class EtwCollector : IDisposable
             return;
         }
 
+        if (!_pathFilter.AllowsAny(path, relatedPath))
+        {
+            return;
+        }
+
         if (!ShouldTrackProcess(processId))
         {
             return;
@@ -276,6 +286,11 @@ internal sealed class EtwCollector : IDisposable
     {
         foreach (var (_, pending) in _pendingRenames.ToArray())
         {
+            if (!_pathFilter.Allows(pending.FromPath))
+            {
+                continue;
+            }
+
             _fileEvents.Enqueue(FileEvent.Live(FileEventKind.Renamed, pending.FromPath, pending.ProcessId, pending.ProcessName) with
             {
                 ObservedAt = pending.Timestamp

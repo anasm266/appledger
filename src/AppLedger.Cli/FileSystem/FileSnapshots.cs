@@ -7,6 +7,9 @@ internal sealed record FileSnapshot(
     IReadOnlyList<string> Errors)
 {
     public static FileSnapshot Capture(IReadOnlyList<string> roots)
+        => Capture(roots, PathFilter.Empty);
+
+    public static FileSnapshot Capture(IReadOnlyList<string> roots, PathFilter pathFilter)
     {
         var files = new Dictionary<string, FileState>(StringComparer.OrdinalIgnoreCase);
         var errors = new ConcurrentBag<string>();
@@ -18,10 +21,15 @@ internal sealed record FileSnapshot(
                 continue;
             }
 
-            foreach (var file in SafeEnumerateFiles(root, errors))
+            foreach (var file in SafeEnumerateFiles(root, errors, pathFilter))
             {
                 try
                 {
+                    if (!pathFilter.Allows(file))
+                    {
+                        continue;
+                    }
+
                     var info = new FileInfo(file);
                     files[info.FullName] = new FileState(info.Length, info.LastWriteTimeUtc);
                 }
@@ -35,7 +43,7 @@ internal sealed record FileSnapshot(
         return new FileSnapshot(DateTimeOffset.Now, roots, files, errors.ToArray());
     }
 
-    private static IEnumerable<string> SafeEnumerateFiles(string root, ConcurrentBag<string> errors)
+    private static IEnumerable<string> SafeEnumerateFiles(string root, ConcurrentBag<string> errors, PathFilter pathFilter)
     {
         var pending = new Stack<string>();
         pending.Push(root);
@@ -58,7 +66,7 @@ internal sealed record FileSnapshot(
 
             foreach (var directory in directories)
             {
-                if (!PathClassifier.IsUsuallyNoise(directory))
+                if (!PathClassifier.IsUsuallyNoise(directory) && !pathFilter.ExcludesDirectory(directory))
                 {
                     pending.Push(directory);
                 }

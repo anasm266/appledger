@@ -21,6 +21,7 @@ Implemented:
 - `run` to launch and record an app
 - `attach` to record an already-running process tree
 - `--profile ai-code` to choose sensible AI coding session defaults
+- multi-use `--include` / `--exclude` path filters for live ETW events and snapshot diffs
 - `--watch-all` to record whole-app live file activity
 - `report` to regenerate artifacts from `session.json` or `session.sqlite`
 - `snapshot` and `diff` for manual before/after workflows
@@ -40,6 +41,7 @@ Implemented:
 - process identity snapshots attached to file and network events for attribution
 - attribution confidence and reason attached to file/network events
 - large-session controls: `--no-reads`, `--max-events`, `--no-sqlite`
+- path filters are applied before event caps so excluded churn does not consume the session budget
 - fixture-driven tests for normalization and summary logic
 
 Recent Phase 1 fixes:
@@ -58,6 +60,7 @@ Recent Phase 1 fixes:
 - grouped network summary implemented and covered by tests
 - Program.cs reduced to command orchestration, with collector/analyzer/reporting code moved into focused files
 - reports distinguish disabled file reads from observed zero file reads
+- reports show active include/exclude filters in capture settings
 - process identity fields added across JSON, CSV, SQLite, and HTML report output
 - attribution quality summary added to reports
 - running app picker added for friendlier `record codex --watch .` style workflows
@@ -80,8 +83,8 @@ Still rough or incomplete:
 - hostname correlation is opportunistic, not guaranteed for every endpoint
 - command parsing is pragmatic, not exhaustive
 - registry coverage is narrow
-- include/exclude path filtering is still missing
 - only one profile exists today: `ai-code`
+- include/exclude filtering is implemented, but app-specific filter presets still need tuning against Cursor, VS Code, Codex, and Claude
 - large sessions still need test coverage and tuning
 - no desktop UI yet
 - `Analysis/Analyzers.cs` is still the largest file and can be split further once AI profiles mature
@@ -113,15 +116,17 @@ Sensitive paths touched: .env
 Shells spawned: PowerShell
 ```
 
-### 2. Include / Exclude Path Filtering
+### 2. App-Specific Filter Presets
 
-Goal: let whole-app mode stay broad without being noisy.
+Goal: let whole-app mode stay broad without being noisy for each major AI/editor app.
 
 Build:
 
-- `--include <path>`
-- `--exclude <path>`
-- likely multiple-use flags
+- Codex-specific excludes
+- Claude-specific excludes
+- Cursor-specific excludes
+- VS Code-specific excludes
+- report grouping that explains what was filtered by preset vs user flags
 
 ### 3. Better Risk Observations
 

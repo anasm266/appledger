@@ -18,6 +18,7 @@ Current Phase 1 capabilities:
 - list running apps as attachable process groups with `apps --running`
 - search running processes with `ps`
 - record whole-app live file activity with `--watch-all`
+- filter noisy paths before capture/export with multi-use `--include` and `--exclude`
 - capture live file and process events with ETW when run elevated
 - fall back to before/after watched-folder snapshots when ETW is unavailable
 - sample IPv4 TCP endpoints by process ID
@@ -36,6 +37,7 @@ Current Phase 1 capabilities:
 - normalize rename targets in regenerated reports and display renames as `old -> new`
 - group `.git` internals and runtime bookkeeping out of the main report tables
 - control large sessions with `--no-reads`, `--max-events <n>`, and `--no-sqlite`
+- keep noisy defaults out of `ai-code` sessions, including `node_modules`, `.git\objects`, `.git\logs`, AppLedger output folders, and common cache folders
 - cover normalization and summary logic with unit tests
 
 Generated artifacts:
@@ -107,19 +109,22 @@ The best current recording modes are:
 - `--watch-all` for "what did this app touch anywhere"
 - `--watch <path>` for "what changed in this repo/folder"
 - both together if you want whole-app activity plus a cleaner project diff
+- `--include <path-or-pattern>` and `--exclude <path-or-pattern>` to filter noisy paths before ETW events are counted or snapshot diffs are generated
 
 The best current control flags for noisy sessions are:
 
 - `--no-reads` to drop the highest-volume ETW category
 - `--max-events <n>` to stop once the session reaches a live event cap
 - `--no-sqlite` to skip `session.sqlite` when you only want HTML/JSON/CSV
+- `--exclude node_modules` or `--exclude .git\objects` to keep high-volume folders out of reports and event caps
 
 Profiles bundle those flags for normal use:
 
-- `--profile ai-code` enables whole-app live capture, disables file reads, caps live file events at `50,000`, and snapshots the current directory
+- `--profile ai-code` enables whole-app live capture, disables file reads, caps live file events at `50,000`, snapshots the current directory, and excludes common dependency/cache/output churn
 - `--profile none` disables presets and leaves behavior to explicit flags
 
 When a profile disables a category, the report labels it as disabled. For example, `ai-code` reports file reads as `Off` / `file reads disabled` instead of implying AppLedger observed zero reads.
+Active include/exclude filters are also shown in the report capture settings.
 
 ## Quick Start
 
@@ -147,6 +152,14 @@ Record an app you launch:
 
 ```powershell
 .\artifacts\publish-test\appledger.exe record code --watch .
+```
+
+Record with extra path filtering:
+
+```powershell
+.\artifacts\publish-test\appledger.exe record codex --watch . `
+  --exclude node_modules `
+  --exclude .git\objects
 ```
 
 Attach to an app that is already running:
@@ -198,11 +211,11 @@ dotnet test AppLedger.slnx
 appledger apps [search]
 appledger apps --running [search]
 appledger ps [search]
-appledger record <app|process search|pid> [--profile ai-code] [--watch <path>] [--out <dir>] [--timeout <seconds>]
-appledger run <app name|alias|exe> [--args "<arguments>"] [--profile <name>] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
-appledger attach <pid|process search> [--profile <name>] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
+appledger record <app|process search|pid> [--profile ai-code] [--watch <path>] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--out <dir>] [--timeout <seconds>]
+appledger run <app name|alias|exe> [--args "<arguments>"] [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
+appledger attach <pid|process search> [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
 appledger report <session.json|session.sqlite> [--out <dir>] [--no-sqlite]
-appledger snapshot <output.json> --watch <path>
+appledger snapshot <output.json> --watch <path> [--include <path-or-pattern>] [--exclude <path-or-pattern>]
 appledger diff <before.json> <after.json>
 ```
 
@@ -212,6 +225,7 @@ Useful examples:
 appledger record codex --watch .
 appledger apps --running codex
 appledger attach codex --profile ai-code
+appledger record codex --watch . --exclude node_modules --exclude .git\objects
 
 dotnet run --project src\AppLedger.Cli -- run "C:\Windows\System32\cmd.exe" `
   --args "/c npm test" `
@@ -243,6 +257,8 @@ dotnet run --project src\AppLedger.Cli -- apps --running codex
 `record` prefers an already-running process and falls back to launching an app. When several matching processes exist, AppLedger picks the root of the matching process tree so commands like `record codex --watch .` include child agent/helper processes. Its default profile is `ai-code`, which enables whole-app live capture, disables high-volume file reads, caps live file events at `50,000`, and snapshots the current directory for project diffs.
 
 `apps --running <search>` is the friendlier process picker. It groups matching processes under the app root, shows child-process counts, and prints a ready-to-run `record` command so users do not need to hunt through Electron helper PIDs.
+
+Path filters run before live events are counted against `--max-events` and before watched-root snapshots are diffed. Plain names match path segments such as `node_modules`; relative paths such as `.git\objects` match that path segment anywhere; rooted paths limit filtering to that exact tree; wildcards such as `*.tmp` are accepted.
 
 3. Use the app normally, then open `report.html`.
 
@@ -299,6 +315,7 @@ Recent Phase 1 progress:
 - test project covering normalization, rename synthesis, merge behavior, and summary generation
 - grouped network destination/process summaries
 - capture settings shown in reports, including disabled file reads for `ai-code`
+- include/exclude path filters shown in capture settings and applied before event caps
 - process identity fields added to JSON, CSV, SQLite, and HTML report views for file/network attribution
 - attribution confidence summary added to the HTML report
 

@@ -11,6 +11,7 @@ Working now:
 - friendly `record` command for the default flow
 - `apps --running` grouped picker for already-running apps
 - `--profile ai-code` preset for AI coding sessions
+- multi-use `--include` / `--exclude` path filters for live events and snapshots
 - process-name recording resolves to the root matching process tree
 - process-name recording deprioritizes AppLedger/dotnet command-line self matches
 - whole-app live mode with `--watch-all`
@@ -21,6 +22,7 @@ Working now:
 - grouped network destination/process summaries
 - full-app summary layer with `Big Picture` and `Activity Buckets`
 - report-visible capture settings, including disabled file-read capture
+- report-visible include/exclude filters
 - process identity snapshots on file/network events for stronger attribution
 - attribution confidence and reason in JSON, CSV, SQLite, and HTML reports
 - HTML / JSON / CSV / SQLite outputs
@@ -55,13 +57,15 @@ appledger apps --running codex
 appledger attach codex --profile ai-code
 ```
 
-### 2. Include / Exclude Path Filters
+### 2. App-Specific Filter Presets
 
 Build:
 
-- `--include <path>`
-- `--exclude <path>`
-- multi-use filters for whole-app sessions
+- Codex-specific filter defaults
+- Claude-specific filter defaults
+- Cursor-specific filter defaults
+- VS Code-specific filter defaults
+- clearer distinction between preset filters and user-supplied filters
 
 ### 3. Better Risk Observations
 

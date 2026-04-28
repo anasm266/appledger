@@ -9,6 +9,7 @@ internal sealed record RunOptions(
     bool WatchAll,
     bool CaptureReads,
     int? MaxEvents,
+    PathFilter PathFilter,
     bool WriteSqlite,
     string? ProfileName,
     TimeSpan? Timeout)
@@ -20,7 +21,7 @@ internal sealed record RunOptions(
     {
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("Usage: appledger run <app name|alias|exe> [--args \"...\"] [--profile <name>] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>]");
+            Console.Error.WriteLine("Usage: appledger run <app name|alias|exe> [--args \"...\"] [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>]");
             return null;
         }
 
@@ -56,6 +57,7 @@ internal sealed record RunOptions(
         var captureReads = !(Cli.HasFlag(args, "--no-reads") || profile.DisableReads);
         var writeSqlite = !Cli.HasFlag(args, "--no-sqlite");
         var maxEvents = Cli.GetPositiveIntOption(args, "--max-events") ?? profile.MaxEvents;
+        var pathFilter = Cli.BuildPathFilter(args, profile);
 
         if (watchRoots.Count == 0 && (profile.IncludeCurrentDirectorySnapshot || !watchAll))
         {
@@ -86,6 +88,7 @@ internal sealed record RunOptions(
             watchAll,
             captureReads,
             maxEvents,
+            pathFilter,
             writeSqlite,
             profile.Name,
             timeout);
@@ -99,6 +102,7 @@ internal sealed record AttachOptions(
     bool WatchAll,
     bool CaptureReads,
     int? MaxEvents,
+    PathFilter PathFilter,
     bool WriteSqlite,
     string? ProfileName,
     TimeSpan? Timeout)
@@ -110,7 +114,7 @@ internal sealed record AttachOptions(
     {
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("Usage: appledger attach <pid|process search> [--profile <name>] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]");
+            Console.Error.WriteLine("Usage: appledger attach <pid|process search> [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]");
             return null;
         }
 
@@ -145,6 +149,7 @@ internal sealed record AttachOptions(
         var captureReads = !(Cli.HasFlag(args, "--no-reads") || profile.DisableReads);
         var writeSqlite = !Cli.HasFlag(args, "--no-sqlite");
         var maxEvents = Cli.GetPositiveIntOption(args, "--max-events") ?? profile.MaxEvents;
+        var pathFilter = Cli.BuildPathFilter(args, profile);
 
         if (watchRoots.Count == 0 && (profile.IncludeCurrentDirectorySnapshot || !watchAll))
         {
@@ -166,8 +171,9 @@ internal sealed record AttachOptions(
             timeout = TimeSpan.FromSeconds(timeoutSeconds);
         }
 
-        return new AttachOptions(root, output, watchRoots, watchAll, captureReads, maxEvents, writeSqlite, profile.Name, timeout);
+        return new AttachOptions(root, output, watchRoots, watchAll, captureReads, maxEvents, pathFilter, writeSqlite, profile.Name, timeout);
     }
+
 }
 
 internal sealed record RecordingProfile(
@@ -176,7 +182,9 @@ internal sealed record RecordingProfile(
     bool DisableReads,
     int? MaxEvents,
     bool IncludeCurrentDirectorySnapshot,
-    bool IncludeTempSnapshot)
+    bool IncludeTempSnapshot,
+    IReadOnlyList<string> IncludeFilters,
+    IReadOnlyList<string> ExcludeFilters)
 {
     public static readonly RecordingProfile None = new(
         "none",
@@ -184,7 +192,9 @@ internal sealed record RecordingProfile(
         DisableReads: false,
         MaxEvents: null,
         IncludeCurrentDirectorySnapshot: false,
-        IncludeTempSnapshot: true);
+        IncludeTempSnapshot: true,
+        IncludeFilters: [],
+        ExcludeFilters: []);
 
     public static readonly RecordingProfile AiCode = new(
         "ai-code",
@@ -192,7 +202,19 @@ internal sealed record RecordingProfile(
         DisableReads: true,
         MaxEvents: 50_000,
         IncludeCurrentDirectorySnapshot: true,
-        IncludeTempSnapshot: false);
+        IncludeTempSnapshot: false,
+        IncludeFilters: [],
+        ExcludeFilters:
+        [
+            "node_modules",
+            ".git\\objects",
+            ".git\\logs",
+            "artifacts",
+            "appledger-runs",
+            "GPUCache",
+            "Code Cache",
+            "Cache_Data"
+        ]);
 
     public static RecordingProfile? Resolve(string? name)
     {
@@ -253,6 +275,13 @@ internal static class Cli
         return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) && parsed > 0
             ? parsed
             : null;
+    }
+
+    public static PathFilter BuildPathFilter(IReadOnlyList<string> args, RecordingProfile profile)
+    {
+        var includes = profile.IncludeFilters.Concat(GetRepeatedOption(args, "--include"));
+        var excludes = profile.ExcludeFilters.Concat(GetRepeatedOption(args, "--exclude"));
+        return PathFilter.From(includes, excludes);
     }
 }
 

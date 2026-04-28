@@ -71,14 +71,15 @@ internal static class Program
         Console.WriteLine($"  App:       {options.Target}");
         Console.WriteLine($"  Output:    {options.OutputDirectory}");
         Console.WriteLine($"  Watch:     {DescribeWatchScope(options.WatchRoots, options.WatchAll)}");
+        Console.WriteLine($"  Filters:   {DescribeFilters(options.PathFilter)}");
         Console.WriteLine();
 
         Console.WriteLine("Taking before snapshot...");
-        var before = FileSnapshot.Capture(options.WatchRoots);
+        var before = FileSnapshot.Capture(options.WatchRoots, options.PathFilter);
         var registryBefore = RegistrySnapshot.Capture();
 
         using var stop = new CancellationTokenSource();
-        using var etwCollector = EtwCollector.TryStart(options.WatchRoots, options.WatchAll, options.CaptureReads, options.MaxEvents);
+        using var etwCollector = EtwCollector.TryStart(options.WatchRoots, options.WatchAll, options.CaptureReads, options.MaxEvents, options.PathFilter);
         if (etwCollector.IsRunning)
         {
             Console.WriteLine("ETW:       live kernel file/process capture enabled");
@@ -154,7 +155,7 @@ internal static class Program
         var endedAt = DateTimeOffset.Now;
         etwCollector.Stop();
         Console.WriteLine("Taking after snapshot...");
-        var after = FileSnapshot.Capture(options.WatchRoots);
+        var after = FileSnapshot.Capture(options.WatchRoots, options.PathFilter);
         var registryAfter = RegistrySnapshot.Capture();
 
         var fileEvents = FileEventMerger.Merge(etwCollector.FileEvents, FileDiff.Compare(before, after));
@@ -173,7 +174,7 @@ internal static class Program
             processSampler.Processes.Values.OrderBy(p => p.FirstSeen).ToList(),
             networkSampler.Events.OrderBy(e => e.FirstSeen).ToList(),
             registryEvents,
-            CaptureSettings(options.ProfileName, options.WatchAll, options.CaptureReads, options.MaxEvents, options.WriteSqlite));
+            CaptureSettings(options.ProfileName, options.WatchAll, options.CaptureReads, options.MaxEvents, options.WriteSqlite, options.PathFilter));
 
         var outputs = (await SessionOutputs.WriteAsync(session, options.OutputDirectory, JsonOptions)).ToList();
         if (options.WriteSqlite)
@@ -219,14 +220,15 @@ internal static class Program
         Console.WriteLine($"  App:       {options.Root.ExecutablePath ?? options.Root.Name}");
         Console.WriteLine($"  Output:    {options.OutputDirectory}");
         Console.WriteLine($"  Watch:     {DescribeWatchScope(options.WatchRoots, options.WatchAll)}");
+        Console.WriteLine($"  Filters:   {DescribeFilters(options.PathFilter)}");
         Console.WriteLine();
 
         Console.WriteLine("Taking before snapshot...");
-        var before = FileSnapshot.Capture(options.WatchRoots);
+        var before = FileSnapshot.Capture(options.WatchRoots, options.PathFilter);
         var registryBefore = RegistrySnapshot.Capture();
 
         using var stop = new CancellationTokenSource();
-        using var etwCollector = EtwCollector.TryStart(options.WatchRoots, options.WatchAll, options.CaptureReads, options.MaxEvents);
+        using var etwCollector = EtwCollector.TryStart(options.WatchRoots, options.WatchAll, options.CaptureReads, options.MaxEvents, options.PathFilter);
         if (etwCollector.IsRunning)
         {
             Console.WriteLine("ETW:       live kernel file/process capture enabled");
@@ -293,7 +295,7 @@ internal static class Program
         var endedAt = DateTimeOffset.Now;
         etwCollector.Stop();
         Console.WriteLine("Taking after snapshot...");
-        var after = FileSnapshot.Capture(options.WatchRoots);
+        var after = FileSnapshot.Capture(options.WatchRoots, options.PathFilter);
         var registryAfter = RegistrySnapshot.Capture();
 
         var fileEvents = FileEventMerger.Merge(etwCollector.FileEvents, FileDiff.Compare(before, after));
@@ -312,7 +314,7 @@ internal static class Program
             processSampler.Processes.Values.OrderBy(p => p.FirstSeen).ToList(),
             networkSampler.Events.OrderBy(e => e.FirstSeen).ToList(),
             registryEvents,
-            CaptureSettings(options.ProfileName, options.WatchAll, options.CaptureReads, options.MaxEvents, options.WriteSqlite));
+            CaptureSettings(options.ProfileName, options.WatchAll, options.CaptureReads, options.MaxEvents, options.WriteSqlite, options.PathFilter));
 
         var outputs = (await SessionOutputs.WriteAsync(session, options.OutputDirectory, JsonOptions)).ToList();
         if (options.WriteSqlite)
@@ -477,7 +479,8 @@ internal static class Program
             roots.Add(Directory.GetCurrentDirectory());
         }
 
-        var snapshot = FileSnapshot.Capture(roots);
+        var pathFilter = PathFilter.From(Cli.GetRepeatedOption(args, "--include"), Cli.GetRepeatedOption(args, "--exclude"));
+        var snapshot = FileSnapshot.Capture(roots, pathFilter);
         File.WriteAllText(output, JsonSerializer.Serialize(snapshot, JsonOptions), Encoding.UTF8);
         Console.WriteLine($"Captured {snapshot.Files.Count:N0} files into {output}");
         return 0;
@@ -520,8 +523,29 @@ internal static class Program
                 : $"[all live file paths] + snapshots under {string.Join("; ", watchRoots)}")
             : string.Join("; ", watchRoots);
 
-    private static SessionCaptureSettings CaptureSettings(string? profile, bool watchAll, bool captureReads, int? maxEvents, bool writeSqlite) =>
-        new(profile, watchAll, captureReads, maxEvents, writeSqlite);
+    private static string DescribeFilters(PathFilter filter)
+    {
+        if (!filter.HasFilters)
+        {
+            return "none";
+        }
+
+        var parts = new List<string>();
+        if (filter.Includes.Count > 0)
+        {
+            parts.Add("include " + string.Join(", ", filter.Includes));
+        }
+
+        if (filter.Excludes.Count > 0)
+        {
+            parts.Add("exclude " + string.Join(", ", filter.Excludes));
+        }
+
+        return string.Join("; ", parts);
+    }
+
+    private static SessionCaptureSettings CaptureSettings(string? profile, bool watchAll, bool captureReads, int? maxEvents, bool writeSqlite, PathFilter pathFilter) =>
+        new(profile, watchAll, captureReads, maxEvents, writeSqlite, pathFilter.Includes, pathFilter.Excludes);
 
     private static string RenderFileReadSummary(SessionReport session) =>
         session.CaptureSettings?.CaptureReads == false
@@ -537,17 +561,18 @@ internal static class Program
           appledger apps [search]
           appledger apps --running [search]
           appledger ps [search]
-          appledger record <app|process search|pid> [--profile ai-code] [--watch <path>] [--out <dir>] [--timeout <seconds>]
-          appledger run <app name|alias|exe> [--args "<arguments>"] [--profile <name>] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
-          appledger attach <pid|process search> [--profile <name>] [--watch <path>] [--watch-all] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
+          appledger record <app|process search|pid> [--profile ai-code] [--watch <path>] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--out <dir>] [--timeout <seconds>]
+          appledger run <app name|alias|exe> [--args "<arguments>"] [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
+          appledger attach <pid|process search> [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
           appledger report <session.json|session.sqlite> [--out <dir>] [--no-sqlite]
-          appledger snapshot <output.json> --watch <path>
+          appledger snapshot <output.json> --watch <path> [--include <path-or-pattern>] [--exclude <path-or-pattern>]
           appledger diff <before.json> <after.json>
 
         Examples:
           appledger apps code
           appledger apps --running codex
           appledger record codex --watch .
+          appledger record codex --watch . --exclude node_modules --exclude .git\objects
           appledger attach codex --profile ai-code
           appledger run code --watch "C:\Users\Anas\Projects\demo-app"
           appledger ps codex

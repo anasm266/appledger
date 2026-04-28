@@ -226,10 +226,12 @@ internal sealed record SessionCaptureSettings(
     bool WatchAll,
     bool CaptureReads,
     int? MaxEvents,
-    bool WriteSqlite)
+    bool WriteSqlite,
+    IReadOnlyList<string>? IncludeFilters = null,
+    IReadOnlyList<string>? ExcludeFilters = null)
 {
     public static SessionCaptureSettings Default(bool watchAll) =>
-        new(null, watchAll, CaptureReads: true, MaxEvents: null, WriteSqlite: true);
+        new(null, watchAll, CaptureReads: true, MaxEvents: null, WriteSqlite: true, IncludeFilters: [], ExcludeFilters: []);
 }
 
 internal sealed record SessionActivityOverview(

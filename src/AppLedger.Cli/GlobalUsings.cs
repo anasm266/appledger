@@ -1,0 +1,16 @@
+global using System.Collections.Concurrent;
+global using System.Diagnostics;
+global using System.Globalization;
+global using System.Management;
+global using System.Net;
+global using System.Runtime.InteropServices;
+global using System.Runtime.CompilerServices;
+global using System.Security;
+global using System.Text;
+global using System.Text.Json;
+global using System.Text.Json.Serialization;
+global using Microsoft.Data.Sqlite;
+global using Microsoft.Diagnostics.Tracing.Parsers;
+global using Microsoft.Diagnostics.Tracing.Parsers.Kernel;
+global using Microsoft.Diagnostics.Tracing.Session;
+global using Microsoft.Win32;

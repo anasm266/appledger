@@ -18,6 +18,7 @@ Working now:
 - HTML / JSON / CSV / SQLite outputs
 - AI-oriented report sections
 - test project with passing normalization and summary fixtures
+- source split into focused CLI, collection, filesystem, analysis, model, output, registry, and report files
 
 Verified against real sessions:
 
@@ -35,6 +36,8 @@ Build first-class summaries for:
 - Claude
 - Cursor
 - VS Code
+
+Keep this refactor-friendly: if the analyzer grows while adding app-specific profiles, split `Analysis/Analyzers.cs` into profile-specific files instead of letting it become the new monolith.
 
 ### 2. Include / Exclude Path Filters
 

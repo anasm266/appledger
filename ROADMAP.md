@@ -26,6 +26,7 @@ Implemented:
 - sampled IPv4 TCP endpoint capture
 - cached DNS / reverse lookup hostname enrichment for network output
 - grouped network summary by destination and process
+- source split out of the original single-file implementation into CLI, collection, filesystem, analysis, model, output, registry, and report modules
 - startup `Run` / `RunOnce` registry monitoring
 - HTML, JSON, CSV, SQLite, AI activity, and cleanup outputs
 - first-screen whole-app summary via `Big Picture` and `Activity Buckets`
@@ -46,6 +47,7 @@ Recent Phase 1 fixes:
 - large-session capture controls implemented
 - test project added and passing against lifecycle / summary fixtures
 - grouped network summary implemented and covered by tests
+- Program.cs reduced to command orchestration, with collector/analyzer/reporting code moved into focused files
 
 Current proof point:
 
@@ -67,6 +69,7 @@ Still rough or incomplete:
 - include/exclude path filtering is still missing
 - large sessions still need test coverage and tuning
 - no desktop UI yet
+- `Analysis/Analyzers.cs` is still the largest file and can be split further once AI profiles mature
 
 These are product polish and fidelity gaps, not viability gaps. The tool is already demonstrable.
 

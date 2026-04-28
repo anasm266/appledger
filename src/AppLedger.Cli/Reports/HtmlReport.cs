@@ -1,0 +1,428 @@
+﻿namespace AppLedger;
+
+internal static class HtmlReport
+{
+    public static string Render(SessionReport session)
+    {
+        var ai = AiCodingAnalyzer.Build(session.WatchRoots, session.FileEvents, session.Processes);
+        var appName = WebUtility.HtmlEncode(Path.GetFileName(session.App));
+        var activityOverview = session.ActivityOverview ?? SessionActivityAnalyzer.Build(session.WatchRoots, session.WatchAll, session.FileEvents, session.NetworkEvents, ai, session.Findings);
+        var networkOverview = session.NetworkOverview ?? NetworkSummaryAnalyzer.Build(session.NetworkEvents, session.Processes);
+        var rows = string.Join(Environment.NewLine, VisibleFileEvents(session.FileEvents).Select(RenderFileRow));
+        var processes = string.Join(Environment.NewLine, session.Processes.Select(p => $"<tr><td>{p.ProcessId}</td><td>{Esc(p.Name)}</td><td>{Esc(p.CommandLine ?? "")}</td></tr>"));
+        var network = string.Join(Environment.NewLine, session.NetworkEvents.Take(200).Select(RenderNetworkRow));
+        var findings = string.Join(Environment.NewLine, session.Findings.Select(f => $"<li class=\"{Esc(f.Severity)}\"><strong>{Esc(f.Severity.ToUpperInvariant())}</strong> {Esc(f.Title)}<br><span>{Esc(f.Detail)}</span></li>"));
+        var folders = string.Join(Environment.NewLine, session.TopFolders.Where(f => !IsGitInternalPath(f.Path) && !PathClassifier.IsSystemRuntimeNoise(f.Path)).Select(f => $"<tr><td>{Esc(f.Path)}</td><td>{Esc(f.Category)}</td><td>{f.FileCount:N0}</td><td>{Format.Bytes(f.BytesAdded)}</td></tr>"));
+        var projectFiles = string.Join(Environment.NewLine, ai.ChangedProjectFiles.Select(RenderProjectFileRow));
+        var commands = string.Join(Environment.NewLine, ai.DeveloperCommands.Select(RenderCommandRow));
+        var sensitive = string.Join(Environment.NewLine, ai.SensitiveAccesses.Select(RenderSensitiveRow));
+        var processGroups = string.Join(Environment.NewLine, ai.ProcessGroups.Select(RenderProcessGroupRow));
+        var timeline = string.Join(Environment.NewLine, ai.ProcessTimeline.Select(RenderTimelineRow));
+        var gitMetadata = SummarizeGitInternalActivity(session.FileEvents);
+        var gitMetadataExamples = string.Join(Environment.NewLine, gitMetadata.Examples.Select(example => $"<li><code>{Esc(example)}</code></li>"));
+        var runtimeNoise = SummarizeSystemRuntimeActivity(session.FileEvents);
+        var runtimeNoiseExamples = string.Join(Environment.NewLine, runtimeNoise.Examples.Select(example => $"<li><code>{Esc(example)}</code></li>"));
+        var activityHighlights = string.Join(Environment.NewLine, activityOverview.Highlights.Select(highlight => $"<li>{Esc(highlight)}</li>"));
+        var activityBuckets = string.Join(Environment.NewLine, activityOverview.Buckets.Select(RenderActivityBucket));
+        var networkDestinations = string.Join(Environment.NewLine, networkOverview.Destinations.Select(RenderNetworkDestinationRow));
+        var networkProcesses = string.Join(Environment.NewLine, networkOverview.Processes.Select(RenderNetworkProcessRow));
+
+        return $$"""
+        <!doctype html>
+        <html lang="en">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>AppLedger Report - {{appName}}</title>
+          <style>
+            :root { color-scheme: light; --ink:#17202a; --muted:#627083; --line:#d8dee7; --bg:#f6f8fb; --panel:#fff; --accent:#1664d9; --warn:#b25b00; --bad:#a11919; }
+            * { box-sizing:border-box; }
+            body { margin:0; font-family:Segoe UI, Arial, sans-serif; color:var(--ink); background:var(--bg); }
+            header { background:#101820; color:#fff; padding:32px 40px; }
+            header p { color:#c7d1dc; margin:8px 0 0; }
+            main { max-width:1180px; margin:0 auto; padding:28px 24px 60px; }
+            section { margin:22px 0; }
+            .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+            .metric { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; }
+            .metric strong { display:block; font-size:28px; }
+            .metric span { color:var(--muted); font-size:13px; }
+            .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+            h2 { margin:0 0 12px; font-size:20px; }
+            table { width:100%; border-collapse:collapse; font-size:13px; }
+            th, td { padding:10px 12px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+            th { background:#eef2f7; color:#364454; font-weight:600; }
+            code { font-family:Cascadia Mono, Consolas, monospace; font-size:12px; }
+            .tag { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:2px 8px; background:#f7f9fc; color:#364454; font-size:12px; }
+            ul.findings { list-style:none; padding:0; margin:0; }
+            ul.findings li { background:var(--panel); border:1px solid var(--line); border-left:5px solid var(--accent); border-radius:8px; margin:10px 0; padding:12px 14px; }
+            ul.findings li.high { border-left-color:var(--bad); }
+            ul.findings li.medium { border-left-color:var(--warn); }
+            ul.findings span { color:var(--muted); }
+            .muted { color:var(--muted); }
+          </style>
+        </head>
+        <body>
+          <header>
+            <h1>AppLedger Report: {{appName}}</h1>
+            <p>{{Esc(session.StartedAt.ToString("g"))}} - {{Esc(session.EndedAt.ToString("g"))}} - {{Esc(RenderWatchScope(session))}}</p>
+          </header>
+          <main>
+            <section class="grid">
+              <div class="metric"><strong>{{session.Summary.FilesRead:N0}}</strong><span>file reads</span></div>
+              <div class="metric"><strong>{{session.Summary.FilesCreated:N0}}</strong><span>files created</span></div>
+              <div class="metric"><strong>{{session.Summary.FilesModified:N0}}</strong><span>files modified</span></div>
+              <div class="metric"><strong>{{session.Summary.FilesDeleted:N0}}</strong><span>files deleted</span></div>
+              <div class="metric"><strong>{{session.Summary.FilesRenamed:N0}}</strong><span>files renamed</span></div>
+              <div class="metric"><strong>{{Format.Bytes(session.Summary.BytesAddedOrChanged)}}</strong><span>added or changed</span></div>
+              <div class="metric"><strong>{{session.Summary.CommandCount:N0}}</strong><span>commands captured</span></div>
+              <div class="metric"><strong>{{session.Summary.NetworkConnectionCount:N0}}</strong><span>network endpoints</span></div>
+            </section>
+
+            <section>
+              <h2>Big Picture</h2>
+              <div class="panel"><div style="padding:16px 18px;">
+                <p><strong>{{Esc(activityOverview.Headline)}}</strong></p>
+                {{(activityOverview.Highlights.Count == 0 ? "<p class=\"muted\">No extra highlights were derived for this session.</p>" : $"<ul>{activityHighlights}</ul>")}}
+              </div></div>
+            </section>
+
+            <section>
+              <h2>Activity Buckets</h2>
+              {{(activityOverview.Buckets.Count == 0 ? "<p class=\"muted\">No bucket summary was derived for this session.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Bucket</th><th>Events</th><th>Unique Paths</th><th>Bytes</th><th>Examples</th></tr></thead><tbody>{activityBuckets}</tbody></table></div>")}}
+            </section>
+
+            <section>
+              <h2>Risky Observations</h2>
+              {{(session.Findings.Count == 0 ? "<p class=\"muted\">No risky observations from the Phase 1 analyzers.</p>" : $"<ul class=\"findings\">{findings}</ul>")}}
+            </section>
+
+            <section>
+              <h2>AI Coding Activity</h2>
+              <div class="grid">
+                <div class="metric"><strong>{{ai.ProjectChanges.TotalChanged:N0}}</strong><span>project files changed</span></div>
+                <div class="metric"><strong>{{ai.Commands.PackageInstalls:N0}}</strong><span>package installs</span></div>
+                <div class="metric"><strong>{{ai.Commands.GitCommands:N0}}</strong><span>git commands</span></div>
+                <div class="metric"><strong>{{ai.Commands.TestCommands:N0}}</strong><span>test commands</span></div>
+                <div class="metric"><strong>{{ai.SensitiveAccesses.Count:N0}}</strong><span>sensitive accesses</span></div>
+                <div class="metric"><strong>{{ai.ProcessGroups.Count:N0}}</strong><span>process groups</span></div>
+              </div>
+            </section>
+
+            <section>
+              <h2>Changed Project Files</h2>
+              {{(ai.ChangedProjectFiles.Count == 0 ? "<p class=\"muted\">No project file changes detected under the watched roots.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Action</th><th>Source</th><th>Category</th><th>Path</th></tr></thead><tbody>{projectFiles}</tbody></table></div>")}}
+            </section>
+
+            <section>
+              <h2>Git Repository Metadata</h2>
+              {{(gitMetadata.Total == 0
+                  ? "<p class=\"muted\">No internal .git write activity was summarized for this session.</p>"
+                  : $"""
+              <div class="grid">
+                <div class="metric"><strong>{gitMetadata.Total:N0}</strong><span>.git internal writes</span></div>
+                <div class="metric"><strong>{gitMetadata.Created:N0}</strong><span>created</span></div>
+                <div class="metric"><strong>{gitMetadata.Modified:N0}</strong><span>modified</span></div>
+                <div class="metric"><strong>{gitMetadata.Deleted:N0}</strong><span>deleted</span></div>
+                <div class="metric"><strong>{gitMetadata.Renamed:N0}</strong><span>renamed</span></div>
+              </div>
+              <p class="muted">Internal repository writes such as objects, refs, and logs are summarized here instead of being mixed into the main file tables. Raw events remain in JSON, CSV, and SQLite exports.</p>
+              <div class="panel"><div style="padding:14px 16px;"><ul>{gitMetadataExamples}</ul></div></div>
+              """)}}
+            </section>
+
+            <section>
+              <h2>System Runtime Activity</h2>
+              {{(runtimeNoise.Total == 0
+                  ? "<p class=\"muted\">No framework or runtime noise was summarized for this session.</p>"
+                  : $"""
+              <div class="grid">
+                <div class="metric"><strong>{runtimeNoise.Total:N0}</strong><span>runtime writes</span></div>
+                <div class="metric"><strong>{runtimeNoise.Created:N0}</strong><span>created</span></div>
+                <div class="metric"><strong>{runtimeNoise.Modified:N0}</strong><span>modified</span></div>
+                <div class="metric"><strong>{runtimeNoise.Deleted:N0}</strong><span>deleted</span></div>
+                <div class="metric"><strong>{runtimeNoise.Renamed:N0}</strong><span>renamed</span></div>
+              </div>
+              <p class="muted">Framework and runtime bookkeeping is summarized here instead of being treated as sensitive or mixed into the main file tables. Raw events remain in JSON, CSV, and SQLite exports.</p>
+              <div class="panel"><div style="padding:14px 16px;"><ul>{runtimeNoiseExamples}</ul></div></div>
+              """)}}
+            </section>
+
+            <section>
+              <h2>Developer Commands</h2>
+              {{(ai.DeveloperCommands.Count == 0 ? "<p class=\"muted\">No package, git, test, shell, or script commands detected.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Kind</th><th>Seen</th><th>First PID</th><th>Process</th><th>Command</th></tr></thead><tbody>{commands}</tbody></table></div>")}}
+            </section>
+
+            <section>
+              <h2>Sensitive Access</h2>
+              {{(ai.SensitiveAccesses.Count == 0 ? "<p class=\"muted\">No sensitive paths detected in the watched roots.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Action</th><th>Source</th><th>PID</th><th>Process</th><th>Path</th></tr></thead><tbody>{sensitive}</tbody></table></div>")}}
+            </section>
+
+            <section>
+              <h2>Process Summary</h2>
+              <div class="panel"><table><thead><tr><th>Process</th><th>Seen</th><th>With command</th><th>First seen</th><th>Last seen</th></tr></thead><tbody>{{processGroups}}</tbody></table></div>
+            </section>
+
+            <section>
+              <h2>Signal Process Timeline</h2>
+              <div class="panel"><table><thead><tr><th>First Seen</th><th>PID</th><th>Parent</th><th>Name</th><th>Duration</th><th>Command</th></tr></thead><tbody>{{timeline}}</tbody></table></div>
+            </section>
+
+            <section>
+              <h2>Top Folders Touched</h2>
+              {{(string.IsNullOrWhiteSpace(folders) ? "<p class=\"muted\">No non-.git, non-runtime folder writes were summarized for this session.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Folder</th><th>Category</th><th>Files</th><th>Growth</th></tr></thead><tbody>{folders}</tbody></table></div>")}}
+            </section>
+
+            <section>
+              <h2>Files</h2>
+              <p class="muted">This table prioritizes writes, sensitive reads, and a deduplicated sample of other reads. Internal .git and runtime bookkeeping writes are summarized separately. Raw events remain in JSON, CSV, and SQLite exports.</p>
+              <div class="panel"><table><thead><tr><th>Action</th><th>Source</th><th>PID</th><th>Category</th><th>Delta</th><th>Path</th></tr></thead><tbody>{{rows}}</tbody></table></div>
+            </section>
+
+            <section>
+              <h2>Child Processes and Commands</h2>
+              <div class="panel"><table><thead><tr><th>PID</th><th>Name</th><th>Command</th></tr></thead><tbody>{{processes}}</tbody></table></div>
+            </section>
+
+            <section>
+              <h2>Network Summary</h2>
+              <div class="grid">
+                <div class="metric"><strong>{{networkOverview.Destinations.Count:N0}}</strong><span>destination groups</span></div>
+                <div class="metric"><strong>{{networkOverview.Processes.Count:N0}}</strong><span>network-active processes</span></div>
+              </div>
+              {{(networkOverview.Destinations.Count == 0
+                  ? "<p class=\"muted\">No grouped network summary was derived for this session.</p>"
+                  : $"""
+              <div class="panel"><table><thead><tr><th>Destination</th><th>Address</th><th>Connections</th><th>Processes</th><th>Ports</th></tr></thead><tbody>{networkDestinations}</tbody></table></div>
+              <div style="height:12px"></div>
+              <div class="panel"><table><thead><tr><th>Process</th><th>Connections</th><th>Destinations</th><th>Examples</th></tr></thead><tbody>{networkProcesses}</tbody></table></div>
+              """)}}
+            </section>
+
+            <section>
+              <h2>Network</h2>
+              <div class="panel"><table><thead><tr><th>PID</th><th>Remote Host</th><th>Remote</th><th>State</th></tr></thead><tbody>{{network}}</tbody></table></div>
+            </section>
+
+            <p class="muted">Phase 1 uses ETW file/process events when elevated, live process/network sampling, and before/after file snapshots as fallback. Packet contents are not collected.</p>
+          </main>
+        </body>
+        </html>
+        """;
+    }
+
+    private static string RenderFileRow(FileEvent file) =>
+        $"<tr><td>{Esc(file.Kind.ToString())}</td><td>{Esc(file.Source)}</td><td>{Esc(file.ProcessId?.ToString(CultureInfo.InvariantCulture) ?? "")}</td><td>{Esc(file.Category)}</td><td>{Format.Bytes(file.SizeDelta)}</td><td><code>{Esc(RenderFilePath(file))}</code></td></tr>";
+
+    private static string RenderProjectFileRow(ProjectFileChange file) =>
+        $"<tr><td>{Esc(file.Kind.ToString())}</td><td>{Esc(file.Source)}</td><td>{Esc(file.Category)}</td><td><code>{Esc(RenderProjectPath(file))}</code></td></tr>";
+
+    private static string RenderCommandRow(CommandActivity command) =>
+        $"<tr><td><span class=\"tag\">{Esc(command.Kind)}</span></td><td>{command.Occurrences:N0}</td><td>{command.ProcessId}</td><td>{Esc(command.ProcessName)}</td><td><code>{Esc(command.CommandLine)}</code></td></tr>";
+
+    private static string RenderSensitiveRow(SensitiveAccess access) =>
+        $"<tr><td>{Esc(access.Kind.ToString())}</td><td>{Esc(access.Source)}</td><td>{Esc(access.ProcessId?.ToString(CultureInfo.InvariantCulture) ?? "")}</td><td>{Esc(access.ProcessName ?? "")}</td><td><code>{Esc(access.RelativePath)}</code></td></tr>";
+
+    private static string RenderProcessGroupRow(ProcessGroupSummary group) =>
+        $"<tr><td>{Esc(group.Name)}</td><td>{group.Count:N0}</td><td>{group.WithCommandLine:N0}</td><td>{Esc(group.FirstSeen.ToString("T", CultureInfo.InvariantCulture))}</td><td>{Esc(group.LastSeen.ToString("T", CultureInfo.InvariantCulture))}</td></tr>";
+
+    private static string RenderTimelineRow(ProcessTimelineItem item) =>
+        $"<tr><td>{Esc(item.FirstSeen.ToString("T", CultureInfo.InvariantCulture))}</td><td>{item.ProcessId}</td><td>{item.ParentProcessId}</td><td>{Esc(item.Name)}</td><td>{item.DurationSeconds:0.0}s</td><td><code>{Esc(item.CommandLine ?? "")}</code></td></tr>";
+
+    private static string RenderNetworkRow(NetworkEvent item) =>
+        $"<tr><td>{item.ProcessId}</td><td>{Esc(NetworkResolver.DisplayHostLabel(item))}</td><td>{Esc(item.RemoteAddress)}:{item.RemotePort}</td><td>{Esc(item.State)}</td></tr>";
+
+    private static string RenderNetworkDestinationRow(NetworkDestinationSummary item)
+    {
+        var processes = item.Processes.Count == 0
+            ? "<span class=\"muted\">None</span>"
+            : string.Join(", ", item.Processes.Select(Esc));
+        var ports = string.Join(", ", item.Ports.Select(port => port.ToString(CultureInfo.InvariantCulture)));
+        var addresses = string.Join(", ", item.Addresses);
+        return $"<tr><td><strong>{Esc(item.HostLabel)}</strong><br><span class=\"muted\">{processes}</span></td><td><code>{Esc(addresses)}</code></td><td>{item.ConnectionCount:N0}</td><td>{item.ProcessCount:N0}</td><td>{Esc(ports)}</td></tr>";
+    }
+
+    private static string RenderNetworkProcessRow(NetworkProcessSummary item)
+    {
+        var examples = item.Destinations.Count == 0
+            ? "<span class=\"muted\">None</span>"
+            : string.Join("<br>", item.Destinations.Select(destination => $"<code>{Esc(destination)}</code>"));
+        return $"<tr><td>{Esc(item.ProcessName)}</td><td>{item.ConnectionCount:N0}</td><td>{item.DestinationCount:N0}</td><td>{examples}</td></tr>";
+    }
+
+    private static string RenderActivityBucket(ActivityBucketSummary bucket)
+    {
+        var examples = bucket.Examples.Count == 0
+            ? "<span class=\"muted\">None</span>"
+            : string.Join("<br>", bucket.Examples.Select(example => $"<code>{Esc(example)}</code>"));
+
+        return $"<tr><td><strong>{Esc(bucket.Label)}</strong><br><span class=\"muted\">{Esc(bucket.Description)}</span></td><td>{bucket.EventCount:N0}</td><td>{bucket.UniquePathCount:N0}</td><td>{Format.Bytes(bucket.BytesChanged)}</td><td>{examples}</td></tr>";
+    }
+
+    private static IEnumerable<FileEvent> VisibleFileEvents(IReadOnlyList<FileEvent> events)
+    {
+        var writes = events
+            .Where(file => file.Kind is FileEventKind.Created or FileEventKind.Modified or FileEventKind.Deleted or FileEventKind.Renamed)
+            .Where(file => !IsGitInternalPath(file.Path) && !PathClassifier.IsSystemRuntimeNoise(file.Path))
+            .OrderBy(file => file.ObservedAt)
+            .Take(120);
+
+        var sensitiveReads = events
+            .Where(file => file.Kind == FileEventKind.Read && file.IsSensitive)
+            .GroupBy(file => NormalizeVisiblePath(file.Path), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderBy(file => file.ObservedAt).First())
+            .Take(40);
+
+        var readSample = events
+            .Where(file => file.Kind == FileEventKind.Read && !file.IsSensitive && !IsBoringRead(file.Path))
+            .GroupBy(file => $"{NormalizeVisiblePath(file.Path)}|{file.ProcessName}", StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderBy(file => file.ObservedAt).First())
+            .Take(80);
+
+        return writes.Concat(sensitiveReads).Concat(readSample).Take(200);
+    }
+
+    private static bool IsBoringRead(string path)
+    {
+        var normalized = path.Replace('/', '\\');
+        return normalized.Contains("\\.git\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\node_modules\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\bin\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\obj\\", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static GitInternalSummary SummarizeGitInternalActivity(IReadOnlyList<FileEvent> events)
+    {
+        var writes = events
+            .Where(file => file.Kind is FileEventKind.Created or FileEventKind.Modified or FileEventKind.Deleted or FileEventKind.Renamed)
+            .Where(file => IsGitInternalPath(file.Path))
+            .ToList();
+
+        var examples = writes
+            .Select(file => DescribeGitInternalPath(file.Path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToList();
+
+        return new GitInternalSummary(
+            writes.Count,
+            writes.Count(file => file.Kind == FileEventKind.Created),
+            writes.Count(file => file.Kind == FileEventKind.Modified),
+            writes.Count(file => file.Kind == FileEventKind.Deleted),
+            writes.Count(file => file.Kind == FileEventKind.Renamed),
+            examples);
+    }
+
+    private static SystemRuntimeSummary SummarizeSystemRuntimeActivity(IReadOnlyList<FileEvent> events)
+    {
+        var writes = events
+            .Where(file => file.Kind is FileEventKind.Created or FileEventKind.Modified or FileEventKind.Deleted or FileEventKind.Renamed)
+            .Where(file => PathClassifier.IsSystemRuntimeNoise(file.Path))
+            .ToList();
+
+        var examples = writes
+            .Select(file => DescribeSystemRuntimePath(file.Path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToList();
+
+        return new SystemRuntimeSummary(
+            writes.Count,
+            writes.Count(file => file.Kind == FileEventKind.Created),
+            writes.Count(file => file.Kind == FileEventKind.Modified),
+            writes.Count(file => file.Kind == FileEventKind.Deleted),
+            writes.Count(file => file.Kind == FileEventKind.Renamed),
+            examples);
+    }
+
+    private static bool IsGitInternalPath(string path) =>
+        path.Replace('/', '\\').Contains("\\.git\\", StringComparison.OrdinalIgnoreCase);
+
+    internal static string DescribeGitInternalPath(string path)
+    {
+        var normalized = path.Replace('/', '\\');
+        var gitIndex = normalized.IndexOf("\\.git\\", StringComparison.OrdinalIgnoreCase);
+        if (gitIndex < 0)
+        {
+            return path;
+        }
+
+        var relative = normalized[(gitIndex + 1)..];
+        if (relative.StartsWith(".git\\objects\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return ".git\\objects\\...";
+        }
+
+        if (relative.StartsWith(".git\\logs\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return ".git\\logs\\...";
+        }
+
+        if (relative.StartsWith(".git\\refs\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return ".git\\refs\\...";
+        }
+
+        return relative;
+    }
+
+    internal static string DescribeSystemRuntimePath(string path)
+    {
+        var normalized = path.Replace('/', '\\');
+        var breadcrumb = "\\ProgramData\\Microsoft\\NetFramework\\BreadcrumbStore\\";
+        var breadcrumbIndex = normalized.IndexOf(breadcrumb, StringComparison.OrdinalIgnoreCase);
+        if (breadcrumbIndex >= 0)
+        {
+            return "ProgramData\\Microsoft\\NetFramework\\BreadcrumbStore\\...";
+        }
+
+        var usageLogs = "\\Microsoft\\CLR_v4.0\\UsageLogs\\";
+        var usageLogIndex = normalized.IndexOf(usageLogs, StringComparison.OrdinalIgnoreCase);
+        if (usageLogIndex >= 0)
+        {
+            return "Microsoft\\CLR_v4.0\\UsageLogs\\...";
+        }
+
+        var nativeImages = "\\assembly\\NativeImages_";
+        var nativeImageIndex = normalized.IndexOf(nativeImages, StringComparison.OrdinalIgnoreCase);
+        if (nativeImageIndex >= 0)
+        {
+            return "assembly\\NativeImages_..."; 
+        }
+
+        return normalized;
+    }
+
+    private static string RenderWatchScope(SessionReport session) =>
+        session.WatchAll
+            ? (session.WatchRoots.Count == 0
+                ? "all live file paths"
+                : $"all live file paths + snapshots under {string.Join("; ", session.WatchRoots)}")
+            : string.Join("; ", session.WatchRoots);
+
+    private static string RenderFilePath(FileEvent file) =>
+        file.Kind == FileEventKind.Renamed && !string.IsNullOrWhiteSpace(file.RelatedPath)
+            ? $"{file.Path} -> {file.RelatedPath}"
+            : file.Path;
+
+    private static string RenderProjectPath(ProjectFileChange file) =>
+        file.Kind == FileEventKind.Renamed && !string.IsNullOrWhiteSpace(file.RelatedRelativePath)
+            ? $"{file.RelativePath} -> {file.RelatedRelativePath}"
+            : file.RelativePath;
+
+    private static string NormalizeVisiblePath(string path)
+    {
+        try
+        {
+            return Path.GetFullPath(path).TrimEnd('\\');
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return path;
+        }
+    }
+
+    private static string Esc(string value) => WebUtility.HtmlEncode(value);
+
+    private sealed record GitInternalSummary(int Total, int Created, int Modified, int Deleted, int Renamed, IReadOnlyList<string> Examples);
+    private sealed record SystemRuntimeSummary(int Total, int Created, int Modified, int Deleted, int Renamed, IReadOnlyList<string> Examples);
+}

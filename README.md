@@ -23,6 +23,7 @@ Current Phase 1 capabilities:
 - capture command lines from the observed process tree
 - detect common startup `Run` and `RunOnce` registry changes
 - summarize whole-app sessions with a top-level "Big Picture" and activity buckets
+- keep the CLI implementation split by collector, filesystem, analysis, output, and report responsibilities
 - persist sessions as JSON and SQLite
 - regenerate reports from `session.json` or `session.sqlite`
 - generate AI-session sections for project file changes, developer commands, sensitive access, and process timeline
@@ -40,6 +41,21 @@ Generated artifacts:
 - `commands.json`
 - `ai-activity.json`
 - `cleanup.ps1`
+
+## Source Layout
+
+The CLI is intentionally still one executable project, but the implementation is split by responsibility:
+
+- `src/AppLedger.Cli/Program.cs` - command dispatch and session orchestration
+- `src/AppLedger.Cli/Cli/` - option parsing and CLI helpers
+- `src/AppLedger.Cli/Collection/` - ETW, WMI process sampling, TCP sampling, process/app discovery
+- `src/AppLedger.Cli/FileSystem/` - file snapshots, diffs, events, and event normalization
+- `src/AppLedger.Cli/Registry/` - registry snapshot/diff collection
+- `src/AppLedger.Cli/Analysis/` - path classification, findings, AI activity, activity buckets, network summaries
+- `src/AppLedger.Cli/Model/` - session/report data models
+- `src/AppLedger.Cli/Outputs/` - artifact writing, JSON, and SQLite persistence
+- `src/AppLedger.Cli/Reports/` - HTML, CSV, and cleanup script rendering
+- `tests/AppLedger.Tests/` - fixture-driven tests for normalization and summary behavior
 
 ## Current Behavior
 

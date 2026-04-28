@@ -34,6 +34,7 @@ Implemented:
 - startup `Run` / `RunOnce` registry monitoring
 - HTML, JSON, CSV, SQLite, AI activity, and cleanup outputs
 - first-screen whole-app summary via `Big Picture` and `Activity Buckets`
+- capture settings displayed in reports so disabled categories are clear
 - large-session controls: `--no-reads`, `--max-events`, `--no-sqlite`
 - fixture-driven tests for normalization and summary logic
 
@@ -52,6 +53,7 @@ Recent Phase 1 fixes:
 - test project added and passing against lifecycle / summary fixtures
 - grouped network summary implemented and covered by tests
 - Program.cs reduced to command orchestration, with collector/analyzer/reporting code moved into focused files
+- reports distinguish disabled file reads from observed zero file reads
 
 Current proof point:
 

@@ -25,6 +25,7 @@ Current Phase 1 capabilities:
 - capture command lines from the observed process tree
 - detect common startup `Run` and `RunOnce` registry changes
 - summarize whole-app sessions with a top-level "Big Picture" and activity buckets
+- show capture settings in reports so disabled categories such as file reads are explicit
 - keep the CLI implementation split by collector, filesystem, analysis, output, and report responsibilities
 - persist sessions as JSON and SQLite
 - regenerate reports from `session.json` or `session.sqlite`
@@ -95,6 +96,8 @@ Profiles bundle those flags for normal use:
 
 - `--profile ai-code` enables whole-app live capture, disables file reads, caps live file events at `50,000`, and snapshots the current directory
 - `--profile none` disables presets and leaves behavior to explicit flags
+
+When a profile disables a category, the report labels it as disabled. For example, `ai-code` reports file reads as `Off` / `file reads disabled` instead of implying AppLedger observed zero reads.
 
 ## Quick Start
 
@@ -265,6 +268,7 @@ Recent Phase 1 progress:
 - large-session capture controls: `--no-reads`, `--max-events`, `--no-sqlite`
 - test project covering normalization, rename synthesis, merge behavior, and summary generation
 - grouped network destination/process summaries
+- capture settings shown in reports, including disabled file reads for `ai-code`
 
 ## Roadmap
 

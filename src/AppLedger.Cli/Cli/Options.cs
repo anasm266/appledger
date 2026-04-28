@@ -10,6 +10,7 @@ internal sealed record RunOptions(
     bool CaptureReads,
     int? MaxEvents,
     bool WriteSqlite,
+    string? ProfileName,
     TimeSpan? Timeout)
 {
     public static RunOptions? Parse(string[] args)
@@ -86,6 +87,7 @@ internal sealed record RunOptions(
             captureReads,
             maxEvents,
             writeSqlite,
+            profile.Name,
             timeout);
     }
 }
@@ -98,6 +100,7 @@ internal sealed record AttachOptions(
     bool CaptureReads,
     int? MaxEvents,
     bool WriteSqlite,
+    string? ProfileName,
     TimeSpan? Timeout)
 {
     public static AttachOptions? Parse(string[] args)
@@ -163,7 +166,7 @@ internal sealed record AttachOptions(
             timeout = TimeSpan.FromSeconds(timeoutSeconds);
         }
 
-        return new AttachOptions(root, output, watchRoots, watchAll, captureReads, maxEvents, writeSqlite, timeout);
+        return new AttachOptions(root, output, watchRoots, watchAll, captureReads, maxEvents, writeSqlite, profile.Name, timeout);
     }
 }
 

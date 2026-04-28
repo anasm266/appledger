@@ -18,6 +18,7 @@ Working now:
 - sampled network endpoints with hostname enrichment when available
 - grouped network destination/process summaries
 - full-app summary layer with `Big Picture` and `Activity Buckets`
+- report-visible capture settings, including disabled file-read capture
 - HTML / JSON / CSV / SQLite outputs
 - AI-oriented report sections
 - test project with passing normalization and summary fixtures

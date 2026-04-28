@@ -26,6 +26,14 @@ internal static class HtmlReport
         var activityBuckets = string.Join(Environment.NewLine, activityOverview.Buckets.Select(RenderActivityBucket));
         var networkDestinations = string.Join(Environment.NewLine, networkOverview.Destinations.Select(RenderNetworkDestinationRow));
         var networkProcesses = string.Join(Environment.NewLine, networkOverview.Processes.Select(RenderNetworkProcessRow));
+        var captureSettings = session.CaptureSettings ?? SessionCaptureSettings.Default(session.WatchAll);
+        var captureSettingsRows = RenderCaptureSettingsRows(captureSettings);
+        var fileReadMetricValue = captureSettings.CaptureReads
+            ? session.Summary.FilesRead.ToString("N0", CultureInfo.InvariantCulture)
+            : "Off";
+        var fileReadMetricLabel = captureSettings.CaptureReads
+            ? "file reads"
+            : "file reads disabled";
 
         return $$"""
         <!doctype html>
@@ -68,7 +76,7 @@ internal static class HtmlReport
           </header>
           <main>
             <section class="grid">
-              <div class="metric"><strong>{{session.Summary.FilesRead:N0}}</strong><span>file reads</span></div>
+              <div class="metric"><strong>{{fileReadMetricValue}}</strong><span>{{fileReadMetricLabel}}</span></div>
               <div class="metric"><strong>{{session.Summary.FilesCreated:N0}}</strong><span>files created</span></div>
               <div class="metric"><strong>{{session.Summary.FilesModified:N0}}</strong><span>files modified</span></div>
               <div class="metric"><strong>{{session.Summary.FilesDeleted:N0}}</strong><span>files deleted</span></div>
@@ -76,6 +84,11 @@ internal static class HtmlReport
               <div class="metric"><strong>{{Format.Bytes(session.Summary.BytesAddedOrChanged)}}</strong><span>added or changed</span></div>
               <div class="metric"><strong>{{session.Summary.CommandCount:N0}}</strong><span>commands captured</span></div>
               <div class="metric"><strong>{{session.Summary.NetworkConnectionCount:N0}}</strong><span>network endpoints</span></div>
+            </section>
+
+            <section>
+              <h2>Capture Settings</h2>
+              <div class="panel"><table><tbody>{{captureSettingsRows}}</tbody></table></div>
             </section>
 
             <section>
@@ -256,6 +269,22 @@ internal static class HtmlReport
             : string.Join("<br>", bucket.Examples.Select(example => $"<code>{Esc(example)}</code>"));
 
         return $"<tr><td><strong>{Esc(bucket.Label)}</strong><br><span class=\"muted\">{Esc(bucket.Description)}</span></td><td>{bucket.EventCount:N0}</td><td>{bucket.UniquePathCount:N0}</td><td>{Format.Bytes(bucket.BytesChanged)}</td><td>{examples}</td></tr>";
+    }
+
+    private static string RenderCaptureSettingsRows(SessionCaptureSettings settings)
+    {
+        var profile = string.IsNullOrWhiteSpace(settings.Profile) ? "none" : settings.Profile;
+        var maxEvents = settings.MaxEvents is null ? "none" : settings.MaxEvents.Value.ToString("N0", CultureInfo.InvariantCulture);
+        var rows = new[]
+        {
+            ("Profile", profile),
+            ("Whole-app live capture", settings.WatchAll ? "enabled" : "disabled"),
+            ("File reads", settings.CaptureReads ? "captured" : "disabled by capture settings"),
+            ("Live file event cap", maxEvents),
+            ("SQLite output", settings.WriteSqlite ? "enabled" : "disabled")
+        };
+
+        return string.Join(Environment.NewLine, rows.Select(row => $"<tr><th>{Esc(row.Item1)}</th><td>{Esc(row.Item2)}</td></tr>"));
     }
 
     private static IEnumerable<FileEvent> VisibleFileEvents(IReadOnlyList<FileEvent> events)

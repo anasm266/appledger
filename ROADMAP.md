@@ -13,6 +13,8 @@ It can:
 - launch an app under recording
 - resolve easy app names like `code`, `cursor`, `chrome`, and `notepad`
 - search recordable apps with `appledger apps [search]`
+- list running processes with `appledger ps [search]`
+- attach to an already-running process tree with `appledger attach <pid|process search>`
 - use ETW for live process and file events when run elevated
 - track the launched process and longer-lived child processes through WMI polling
 - capture command lines for observed processes
@@ -24,7 +26,8 @@ It can:
 - detect common startup registry key changes
 - persist sessions as JSON and SQLite
 - regenerate reports from `session.json` or `session.sqlite`
-- generate `report.html`, `session.json`, `session.sqlite`, `touched-files.csv`, `commands.json`, and `cleanup.ps1`
+- generate `report.html`, `session.json`, `session.sqlite`, `touched-files.csv`, `commands.json`, `ai-activity.json`, and `cleanup.ps1`
+- render AI coding sections for project file changes, developer commands, sensitive access, and process timeline
 
 Example:
 
@@ -68,15 +71,9 @@ Status: in progress. The first ETW, SQLite, and report regeneration path is impl
 Remaining:
 
 - reliable process-tree attribution using PID plus process start time
-- command timeline
 - richer JSON schema
-- focused AI coding report sections:
-  - changed project files
-  - commands run
-  - package installs
-  - tests run
-  - git commands
-  - sensitive locations touched
+- higher precision command parsing for compound shell commands
+- focused AI coding report sections for package installs, tests, git commands, sensitive locations, and process timeline are implemented and should be refined against real AI-app sessions
 
 Target demo:
 

@@ -19,6 +19,13 @@ dotnet run --project src\AppLedger.Cli -- apps code
 dotnet run --project src\AppLedger.Cli -- run code --watch "C:\Path\To\Project"
 ```
 
+Attach to an app that is already running:
+
+```powershell
+dotnet run --project src\AppLedger.Cli -- ps codex
+dotnet run --project src\AppLedger.Cli -- attach <pid> --watch "C:\Path\To\Project" --out artifacts\codex-session --timeout 300
+```
+
 Generated files:
 
 - `report.html`
@@ -26,6 +33,7 @@ Generated files:
 - `session.sqlite`
 - `touched-files.csv`
 - `commands.json`
+- `ai-activity.json`
 - `cleanup.ps1`
 
 ## Examples
@@ -68,6 +76,8 @@ This version is still CLI-first, but it now has the first real collector path:
 - file activity falls back to a before/after snapshot diff of watched roots when ETW is unavailable
 - registry capture watches common startup `Run` and `RunOnce` keys
 - sessions are saved as JSON and SQLite
+- AI coding activity sections group project file changes, developer commands, sensitive accesses, and process timeline
+- `attach` records an already-running process tree by PID or process search
 
 DNS names, network byte counts, packet contents, blocking, and kernel drivers are not implemented yet.
 

@@ -205,6 +205,7 @@ internal static class Program
             Console.WriteLine($"  {output}");
         }
 
+        OpenReportIfRequested(outputs, options.OpenReport);
         return 0;
     }
 
@@ -346,6 +347,7 @@ internal static class Program
             Console.WriteLine($"  {output}");
         }
 
+        OpenReportIfRequested(outputs, options.OpenReport);
         return 0;
     }
 
@@ -551,6 +553,37 @@ internal static class Program
     private static SessionCaptureSettings CaptureSettings(string? profile, bool watchAll, bool captureReads, int? maxEvents, bool writeSqlite, PathFilter pathFilter) =>
         new(profile, watchAll, captureReads, maxEvents, writeSqlite, pathFilter.Includes, pathFilter.Excludes);
 
+    private static void OpenReportIfRequested(IReadOnlyList<string> outputs, bool openReport)
+    {
+        if (!openReport)
+        {
+            return;
+        }
+
+        var reportPath = outputs.FirstOrDefault(path => Path.GetFileName(path).Equals("report.html", StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(reportPath) || !File.Exists(reportPath))
+        {
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = reportPath,
+                UseShellExecute = true
+            });
+            Console.WriteLine();
+            Console.WriteLine($"Opened report: {reportPath}");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or FileNotFoundException)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"Could not open report automatically: {ex.Message}");
+            Console.WriteLine($"Open manually: {reportPath}");
+        }
+    }
+
     private static string RenderFileReadSummary(SessionReport session) =>
         session.CaptureSettings?.CaptureReads == false
             ? "disabled by capture settings"
@@ -565,9 +598,9 @@ internal static class Program
           appledger apps [search]
           appledger apps --running [search]
           appledger ps [search]
-          appledger record <app|process search|pid> [--profile ai-code|codex|claude|cursor|vscode|none] [--watch <path>] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--out <dir>] [--timeout <seconds>]
-          appledger run <app name|alias|exe> [--args "<arguments>"] [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
-          appledger attach <pid|process search> [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
+          appledger record <app|process search|pid> [--profile ai-code|codex|claude|cursor|vscode|none] [--watch <path>] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-open] [--out <dir>] [--timeout <seconds>]
+          appledger run <app name|alias|exe> [--args "<arguments>"] [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--no-open] [--out <dir>] [--timeout <seconds>]
+          appledger attach <pid|process search> [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--no-open] [--out <dir>] [--timeout <seconds>]
           appledger report <session.json|session.sqlite> [--out <dir>] [--no-sqlite]
           appledger snapshot <output.json> --watch <path> [--include <path-or-pattern>] [--exclude <path-or-pattern>]
           appledger diff <before.json> <after.json>
@@ -582,12 +615,17 @@ internal static class Program
           appledger record codex --watch . --exclude node_modules --exclude .git\objects
           appledger attach codex --profile ai-code
           appledger run code --watch "C:\Users\Anas\Projects\demo-app"
+          appledger record codex --watch . --no-open
           appledger ps codex
           appledger run "C:\Windows\System32\notepad.exe" --watch "%USERPROFILE%\Documents"
           appledger run "C:\Path\To\Code.exe" --watch "C:\Users\Anas\Projects\demo-app"
 
         Profiles:
           ai-code  Whole-app live capture, no file reads, 50,000 live file cap, current-directory snapshot
+          codex    ai-code plus Codex-specific cache/log filters
+          claude   ai-code plus Claude-specific cache/log filters
+          cursor   ai-code plus Cursor-specific cache/log filters
+          vscode   ai-code plus VS Code-specific cache/log filters
           none     No preset; use explicit flags
 
         Notes:

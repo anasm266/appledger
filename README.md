@@ -13,6 +13,8 @@ Current Phase 1 capabilities:
 - record with a friendly default command: `record <app|process> --watch .`
 - record a launched app with `run`
 - attach to an already-running app with `attach`
+- open `report.html` automatically after `record`, `run`, or `attach`
+- suppress automatic report opening with `--no-open`
 - apply capture presets with `--profile ai-code`, `codex`, `claude`, `cursor`, or `vscode`
 - discover easy app aliases with `apps`
 - list running apps as attachable process groups with `apps --running`
@@ -111,6 +113,7 @@ The best current recording modes are:
 - `--watch <path>` for "what changed in this repo/folder"
 - both together if you want whole-app activity plus a cleaner project diff
 - `--include <path-or-pattern>` and `--exclude <path-or-pattern>` to filter noisy paths before ETW events are counted or snapshot diffs are generated
+- `--no-open` when you do not want AppLedger to open `report.html` after recording
 
 The best current control flags for noisy sessions are:
 
@@ -157,6 +160,12 @@ Record an app you launch:
 
 ```powershell
 .\artifacts\publish-test\appledger.exe record code --watch .
+```
+
+AppLedger opens `report.html` automatically after a successful recording. For terminal-only runs:
+
+```powershell
+.\artifacts\publish-test\appledger.exe record code --watch . --no-open
 ```
 
 Record with extra path filtering:
@@ -216,9 +225,9 @@ dotnet test AppLedger.slnx
 appledger apps [search]
 appledger apps --running [search]
 appledger ps [search]
-appledger record <app|process search|pid> [--profile ai-code|codex|claude|cursor|vscode|none] [--watch <path>] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--out <dir>] [--timeout <seconds>]
-appledger run <app name|alias|exe> [--args "<arguments>"] [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
-appledger attach <pid|process search> [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]
+appledger record <app|process search|pid> [--profile ai-code|codex|claude|cursor|vscode|none] [--watch <path>] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-open] [--out <dir>] [--timeout <seconds>]
+appledger run <app name|alias|exe> [--args "<arguments>"] [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--no-open] [--out <dir>] [--timeout <seconds>]
+appledger attach <pid|process search> [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--no-open] [--out <dir>] [--timeout <seconds>]
 appledger report <session.json|session.sqlite> [--out <dir>] [--no-sqlite]
 appledger snapshot <output.json> --watch <path> [--include <path-or-pattern>] [--exclude <path-or-pattern>]
 appledger diff <before.json> <after.json>
@@ -231,6 +240,7 @@ appledger record codex --watch .
 appledger record claude --watch .
 appledger record cursor --watch .
 appledger record code --watch .
+appledger record codex --watch . --no-open
 appledger apps --running codex
 appledger attach codex --profile ai-code
 appledger record codex --watch . --exclude node_modules --exclude .git\objects
@@ -268,7 +278,7 @@ dotnet run --project src\AppLedger.Cli -- apps --running codex
 
 Path filters run before live events are counted against `--max-events` and before watched-root snapshots are diffed. Plain names match path segments such as `node_modules`; relative paths such as `.git\objects` match that path segment anywhere; rooted paths limit filtering to that exact tree; wildcards such as `*.tmp` are accepted.
 
-3. Use the app normally, then open `report.html`.
+3. Use the app normally. AppLedger opens `report.html` automatically unless `--no-open` is set.
 
 What the report can now surface for AI sessions:
 
@@ -325,6 +335,7 @@ Recent Phase 1 progress:
 - capture settings shown in reports, including disabled file reads for `ai-code`
 - include/exclude path filters shown in capture settings and applied before event caps
 - app-specific AI profiles for Codex, Claude, Cursor, and VS Code
+- automatic report opening with `--no-open` for scripted runs
 - process identity fields added to JSON, CSV, SQLite, and HTML report views for file/network attribution
 - attribution confidence summary added to the HTML report
 

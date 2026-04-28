@@ -11,6 +11,7 @@ internal sealed record RunOptions(
     int? MaxEvents,
     PathFilter PathFilter,
     bool WriteSqlite,
+    bool OpenReport,
     string? ProfileName,
     TimeSpan? Timeout)
 {
@@ -21,7 +22,7 @@ internal sealed record RunOptions(
     {
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("Usage: appledger run <app name|alias|exe> [--args \"...\"] [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>]");
+            Console.Error.WriteLine("Usage: appledger run <app name|alias|exe> [--args \"...\"] [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--no-open] [--out <dir>]");
             return null;
         }
 
@@ -56,6 +57,7 @@ internal sealed record RunOptions(
         var watchAll = Cli.HasFlag(args, "--watch-all") || profile.WatchAll;
         var captureReads = !(Cli.HasFlag(args, "--no-reads") || profile.DisableReads);
         var writeSqlite = !Cli.HasFlag(args, "--no-sqlite");
+        var openReport = !Cli.HasFlag(args, "--no-open");
         var maxEvents = Cli.GetPositiveIntOption(args, "--max-events") ?? profile.MaxEvents;
         var pathFilter = Cli.BuildPathFilter(args, profile);
 
@@ -90,6 +92,7 @@ internal sealed record RunOptions(
             maxEvents,
             pathFilter,
             writeSqlite,
+            openReport,
             profile.Name,
             timeout);
     }
@@ -104,6 +107,7 @@ internal sealed record AttachOptions(
     int? MaxEvents,
     PathFilter PathFilter,
     bool WriteSqlite,
+    bool OpenReport,
     string? ProfileName,
     TimeSpan? Timeout)
 {
@@ -114,7 +118,7 @@ internal sealed record AttachOptions(
     {
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("Usage: appledger attach <pid|process search> [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--out <dir>] [--timeout <seconds>]");
+            Console.Error.WriteLine("Usage: appledger attach <pid|process search> [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--no-open] [--out <dir>] [--timeout <seconds>]");
             return null;
         }
 
@@ -148,6 +152,7 @@ internal sealed record AttachOptions(
         var watchAll = Cli.HasFlag(args, "--watch-all") || profile.WatchAll;
         var captureReads = !(Cli.HasFlag(args, "--no-reads") || profile.DisableReads);
         var writeSqlite = !Cli.HasFlag(args, "--no-sqlite");
+        var openReport = !Cli.HasFlag(args, "--no-open");
         var maxEvents = Cli.GetPositiveIntOption(args, "--max-events") ?? profile.MaxEvents;
         var pathFilter = Cli.BuildPathFilter(args, profile);
 
@@ -171,7 +176,7 @@ internal sealed record AttachOptions(
             timeout = TimeSpan.FromSeconds(timeoutSeconds);
         }
 
-        return new AttachOptions(root, output, watchRoots, watchAll, captureReads, maxEvents, pathFilter, writeSqlite, profile.Name, timeout);
+        return new AttachOptions(root, output, watchRoots, watchAll, captureReads, maxEvents, pathFilter, writeSqlite, openReport, profile.Name, timeout);
     }
 
 }

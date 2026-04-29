@@ -14,6 +14,7 @@ internal static class Analyzer
         var findings = new List<Finding>();
 
         AddSensitivePathFindings(findings, files);
+        AddStartupFolderFindings(findings, files);
         AddProcessFindings(findings, processes);
         AddRegistryFindings(findings, registry);
         AddFileScopeFindings(findings, watchRoots, watchAll, files);
@@ -72,10 +73,40 @@ internal static class Analyzer
 
     private static void AddRegistryFindings(List<Finding> findings, IReadOnlyList<RegistryEvent> registry)
     {
-        foreach (var entry in registry.Where(r => r.Key.Contains("\\Run", StringComparison.OrdinalIgnoreCase)))
+        foreach (var group in registry.GroupBy(entry => ClassifyRegistryPersistence(entry.Key), StringComparer.OrdinalIgnoreCase))
         {
-            AddFinding(findings, "high", "Startup persistence registry change", $"{entry.Kind}: {entry.Key}");
+            var classification = group.Key;
+            if (classification.Length == 0)
+            {
+                continue;
+            }
+
+            var entries = group.Take(5).ToList();
+            var examples = string.Join("; ", entries.Select(entry => $"{entry.Kind}: {entry.Key}"));
+            var severity = classification is "Startup persistence change" or "Windows service persistence change" or "Scheduled task persistence change"
+                ? "high"
+                : "medium";
+            AddFinding(findings, severity, classification, examples);
         }
+    }
+
+    private static void AddStartupFolderFindings(List<Finding> findings, IReadOnlyList<FileEvent> files)
+    {
+        var startupWrites = files
+            .Where(file => file.Kind is FileEventKind.Created or FileEventKind.Modified or FileEventKind.Deleted or FileEventKind.Renamed)
+            .Where(file => IsStartupFolderPath(file.Path) || (!string.IsNullOrWhiteSpace(file.RelatedPath) && IsStartupFolderPath(file.RelatedPath)))
+            .GroupBy(file => NormalizePath(file.RelatedPath ?? file.Path), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderBy(file => file.ObservedAt).First())
+            .Take(5)
+            .ToList();
+
+        if (startupWrites.Count == 0)
+        {
+            return;
+        }
+
+        var examples = string.Join("; ", startupWrites.Select(file => $"{file.Kind}: {file.RelatedPath ?? file.Path}"));
+        AddFinding(findings, "high", "Startup folder persistence change", examples);
     }
 
     private static void AddFileScopeFindings(List<Finding> findings, IReadOnlyList<string> watchRoots, bool watchAll, IReadOnlyList<FileEvent> files)
@@ -165,6 +196,48 @@ internal static class Analyzer
             || fileName.Contains("id_rsa", StringComparison.OrdinalIgnoreCase)
             || fileName.Contains("credentials", StringComparison.OrdinalIgnoreCase)
             || fileName.Contains("token", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ClassifyRegistryPersistence(string key)
+    {
+        var normalized = key.Replace('/', '\\');
+        if (normalized.Contains("\\Microsoft\\Windows\\CurrentVersion\\Run\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\Microsoft\\Windows\\CurrentVersion\\RunOnce\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\Explorer\\StartupApproved\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Startup persistence change";
+        }
+
+        if (normalized.Contains("\\SYSTEM\\CurrentControlSet\\Services\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Windows service persistence change";
+        }
+
+        if (normalized.Contains("\\Schedule\\TaskCache\\Tree\\", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Scheduled task persistence change";
+        }
+
+        if (normalized.Contains("\\Software\\Classes\\", StringComparison.OrdinalIgnoreCase)
+            && (normalized.Contains("\\URL Protocol", StringComparison.OrdinalIgnoreCase)
+                || normalized.Contains("\\shell\\open\\command\\", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "Protocol handler change";
+        }
+
+        if (normalized.Contains("\\Explorer\\FileExts\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\Software\\Classes\\.", StringComparison.OrdinalIgnoreCase))
+        {
+            return "File association change";
+        }
+
+        return "";
+    }
+
+    private static bool IsStartupFolderPath(string path)
+    {
+        var normalized = path.Replace('/', '\\');
+        return normalized.Contains("\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string SensitiveTitle(string path)

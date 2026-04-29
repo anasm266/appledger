@@ -33,6 +33,8 @@ Working now:
 - process identity snapshots on file/network events for stronger attribution
 - attribution confidence and reason in JSON, CSV, SQLite, and HTML reports
 - higher-signal risk observations for AI coding sessions
+- broader persistence risk observations for startup registry, Startup folders, services, scheduled tasks, protocol handlers, and file associations
+- conservative cleanup guidance in HTML and `cleanup.ps1`
 - active process-tree membership guarded against PID reuse before ETW/network sync
 - HTML / JSON / CSV / SQLite outputs
 - AI-oriented report sections
@@ -71,21 +73,28 @@ appledger apps --running codex
 appledger attach codex --profile ai-code
 ```
 
-### 2. Persistence and Cleanup Polish
+### 2. Persistence Summary Polish
 
-Build:
+Built:
 
 - broader startup/persistence checks
-- startup folder, scheduled task, service, protocol handler, and file association detection
+- Startup folder, scheduled task, service, protocol handler, and file association detection
 - cache/temp cleanup grouping
 - conservative cleanup script annotations
+
+Next:
+
+- dedicated persistence section in HTML
+- clean-state wording such as "added no startup persistence"
+- scheduled task command/action extraction where available
+- service image-path and start-mode summaries
 
 ## Not Next
 
 These are later, not immediate:
 
 - desktop UI
-- broad registry/persistence analysis
-- scheduled tasks / services / protocol handlers
+- whole-registry diffing
+- enforcement/blocking
 - driver-backed collector
 - guard / block mode

@@ -39,8 +39,11 @@ Implemented:
 - process-name recording now prefers the root of a matching process tree instead of an arbitrary child process
 - running-app selection now groups Electron/helper processes under the best app root and deprioritizes AppLedger's own command line
 - startup `Run` / `RunOnce` registry monitoring
+- broader persistence-oriented registry monitoring for StartupApproved, services, scheduled task cache, protocol handlers, and file associations
+- Startup folder write findings
 - higher-signal risk observations for sensitive paths, shell spawns, package installs, network tools, external endpoints, and outside-root writes
 - HTML, JSON, CSV, SQLite, AI activity, and cleanup outputs
+- conservative cleanup planner with likely-safe cache/temp candidates and review-only app-data candidates
 - first-screen whole-app summary via `Big Picture` and `Activity Buckets`
 - polished first-screen HTML summary with risk state, priority observations, and compact session cards
 - capture settings displayed in reports so disabled categories are clear
@@ -75,6 +78,8 @@ Recent Phase 1 fixes:
 - process-tree membership hardened against PID reuse false positives
 - first-screen report summary moved above raw tables and tuned for quick scanning
 - risk analyzer expanded for AI coding sessions and covered by tests
+- persistence analyzer expanded beyond Run/RunOnce and covered by tests
+- cleanup guidance added to reports and cleanup.ps1
 - running app picker added for friendlier `record codex --watch .` style workflows
 - app-specific AI profiles added on top of the generic `ai-code` defaults
 - automatic report opening added with `--no-open` escape hatch
@@ -97,7 +102,7 @@ Still rough or incomplete:
 - process attribution is much stronger than the initial PID-only version, but long-session edge cases still need more real-world validation
 - hostname correlation is opportunistic, not guaranteed for every endpoint
 - command parsing is pragmatic, not exhaustive
-- registry coverage is narrow
+- registry coverage focuses on high-value persistence locations, not broad whole-registry diffs
 - app-specific filter presets exist, but they still need tuning against longer real Codex, Claude, Cursor, and VS Code sessions
 - large sessions still need test coverage and tuning
 - no desktop UI yet
@@ -130,17 +135,28 @@ Sensitive paths touched: .env
 Shells spawned: PowerShell
 ```
 
-### 2. Persistence and Cleanup Polish
+### 2. Dedicated Persistence Summary
 
-Goal: make the top of the report explain whether an app tried to stick around or left obvious cleanup behind.
+Goal: make persistence as scannable as network and AI activity.
 
-Build:
+Built now:
 
-- persistence-oriented registry detections beyond current `Run` / `RunOnce` keys
-- startup folder, scheduled task, service, protocol handler, and file association checks
-- startup/persistence summary section
+- startup registry checks
+- StartupApproved registry checks
+- Startup folder write checks
+- service registry checks
+- scheduled task cache checks
+- protocol handler checks
+- file association checks
 - safer cache/temp cleanup classification
 - clearer `cleanup.ps1` review comments
+
+Next build:
+
+- dedicated report section that says "added no startup persistence" when clean
+- separate persistence export block in `session.json`
+- scheduled task action/command details where available
+- service image-path diff summaries
 
 Success looks like the first screen answering:
 
@@ -160,10 +176,10 @@ Goal: strong Windows observability beyond the MVP.
 
 Build:
 
-- broader registry snapshot/diff for high-value locations
-- scheduled task detection
-- service detection
-- protocol handler and file association detection
+- deeper registry snapshot/diff for high-value locations
+- scheduled task action extraction
+- service image-path/start-mode summaries
+- protocol handler and file association summaries
 - USN journal fallback for missed file changes
 - deeper process-instance history for long sessions and exited/reused processes
 

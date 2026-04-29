@@ -297,6 +297,8 @@ public sealed class NormalizationTests
 
         Assert.Contains("Big Picture", html, StringComparison.Ordinal);
         Assert.Contains("Activity Buckets", html, StringComparison.Ordinal);
+        Assert.Contains("No medium/high observations", html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("no attributed events", html, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Mostly temp churn", html, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("known bytes changed", html, StringComparison.OrdinalIgnoreCase);
     }

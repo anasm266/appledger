@@ -30,6 +30,7 @@ Current Phase 1 capabilities:
 - capture command lines from the observed process tree
 - detect common startup `Run` and `RunOnce` registry changes
 - summarize whole-app sessions with a top-level "Big Picture" and activity buckets
+- show a first-screen report summary with risk state, priority observations, capture/profile state, attribution quality, watched-root changes, commands, and network groups
 - label watched-root changes separately from true source/project intent
 - show byte totals as known bytes because live ETW events often lack size deltas
 - show capture settings in reports so disabled categories such as file reads are explicit
@@ -339,6 +340,7 @@ Recent Phase 1 progress:
 - grouped network destination/process summaries
 - capture settings shown in reports, including disabled file reads for `ai-code`
 - include/exclude path filters shown in capture settings and applied before event caps
+- first-screen report polish with an executive summary and priority cards above raw tables
 - app-specific AI profiles for Codex, Claude, Cursor, and VS Code
 - automatic report opening with `--no-open` for scripted runs
 - report wording now distinguishes watched-root changes from source/project files and labels byte totals as known bytes

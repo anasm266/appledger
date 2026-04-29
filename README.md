@@ -29,6 +29,7 @@ Current Phase 1 capabilities:
 - group network activity by destination and process
 - capture command lines from the observed process tree
 - detect common startup `Run` and `RunOnce` registry changes
+- emit higher-signal risk observations for secret-like paths, shell spawns, package installs, network-transfer tools, external endpoints, and user-facing writes outside watched roots
 - summarize whole-app sessions with a top-level "Big Picture" and activity buckets
 - show a first-screen report summary with risk state, priority observations, capture/profile state, attribution quality, watched-root changes, commands, and network groups
 - label watched-root changes separately from true source/project intent
@@ -341,6 +342,7 @@ Recent Phase 1 progress:
 - capture settings shown in reports, including disabled file reads for `ai-code`
 - include/exclude path filters shown in capture settings and applied before event caps
 - first-screen report polish with an executive summary and priority cards above raw tables
+- stronger risk findings for AI coding sessions, including `.env`, SSH/credential files, PowerShell bypass, package installs, network tools, external endpoints, and outside-root writes
 - app-specific AI profiles for Codex, Claude, Cursor, and VS Code
 - automatic report opening with `--no-open` for scripted runs
 - report wording now distinguishes watched-root changes from source/project files and labels byte totals as known bytes

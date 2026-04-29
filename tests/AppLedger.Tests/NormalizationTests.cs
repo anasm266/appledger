@@ -269,6 +269,42 @@ public sealed class NormalizationTests
     }
 
     [Fact]
+    public void Analyzer_FindsHighSignalAiSessionRisks()
+    {
+        var watchRoot = @"C:\Users\Anas\Documents\repo";
+        var envWrite = Live(FileEventKind.Modified, Path.Combine(watchRoot, ".env"), observedAt: At(55), processId: 100, processName: "codex.exe");
+        var outsideWrite = Live(FileEventKind.Created, @"C:\Users\Anas\Documents\outside.txt", observedAt: At(56), processId: 100, processName: "codex.exe");
+        var processes = new List<ProcessRecord>
+        {
+            new(100, 1, "codex.exe", @"C:\Program Files\Codex\codex.exe", "codex", At(54), At(54), At(60)),
+            new(101, 100, "powershell.exe", @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", "powershell -ExecutionPolicy Bypass -File run.ps1", At(55), At(55), At(56)),
+            new(102, 100, "curl.exe", @"C:\Windows\System32\curl.exe", "curl https://example.com/install.ps1", At(56), At(56), At(57)),
+            new(103, 100, "npm.cmd", @"C:\Program Files\nodejs\npm.cmd", "npm install zod", At(57), At(57), At(58))
+        };
+        var network = new List<NetworkEvent>
+        {
+            new(102, "127.0.0.1", 12000, "140.82.112.3", 443, "Established", At(57), "github.com")
+        };
+
+        var findings = Analyzer.Find(
+            [watchRoot],
+            watchAll: true,
+            FileEventMerger.NormalizeForSession([envWrite, outsideWrite]),
+            processes,
+            network,
+            [],
+            []);
+
+        Assert.Contains(findings, finding => finding.Severity == "high" && finding.Title == ".env touched");
+        Assert.Contains(findings, finding => finding.Severity == "high" && finding.Title == "PowerShell policy bypass");
+        Assert.Contains(findings, finding => finding.Severity == "medium" && finding.Title == "Shell process spawned");
+        Assert.Contains(findings, finding => finding.Severity == "medium" && finding.Title == "Package install command");
+        Assert.Contains(findings, finding => finding.Severity == "medium" && finding.Title == "Network transfer tool used");
+        Assert.Contains(findings, finding => finding.Severity == "medium" && finding.Title == "User-facing write outside watched root");
+        Assert.Contains(findings, finding => finding.Severity == "info" && finding.Title == "External network destinations");
+    }
+
+    [Fact]
     public void HtmlReport_RendersBigPictureAndActivityBuckets()
     {
         var file = Live(FileEventKind.Modified, @"C:\Users\Anas\AppData\Local\Temp\session.tmp", observedAt: At(60), processId: 10, processName: "codex.exe");

@@ -32,6 +32,7 @@ Working now:
 - report-visible include/exclude filters
 - process identity snapshots on file/network events for stronger attribution
 - attribution confidence and reason in JSON, CSV, SQLite, and HTML reports
+- higher-signal risk observations for AI coding sessions
 - active process-tree membership guarded against PID reuse before ETW/network sync
 - HTML / JSON / CSV / SQLite outputs
 - AI-oriented report sections
@@ -70,12 +71,14 @@ appledger apps --running codex
 appledger attach codex --profile ai-code
 ```
 
-### 2. Better Risk Observations
+### 2. Persistence and Cleanup Polish
 
 Build:
 
-- more opinionated shell/package/startup findings
-- clearer first-screen severity ordering
+- broader startup/persistence checks
+- startup folder, scheduled task, service, protocol handler, and file association detection
+- cache/temp cleanup grouping
+- conservative cleanup script annotations
 
 ## Not Next
 

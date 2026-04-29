@@ -39,6 +39,7 @@ Implemented:
 - process-name recording now prefers the root of a matching process tree instead of an arbitrary child process
 - running-app selection now groups Electron/helper processes under the best app root and deprioritizes AppLedger's own command line
 - startup `Run` / `RunOnce` registry monitoring
+- higher-signal risk observations for sensitive paths, shell spawns, package installs, network tools, external endpoints, and outside-root writes
 - HTML, JSON, CSV, SQLite, AI activity, and cleanup outputs
 - first-screen whole-app summary via `Big Picture` and `Activity Buckets`
 - polished first-screen HTML summary with risk state, priority observations, and compact session cards
@@ -73,6 +74,7 @@ Recent Phase 1 fixes:
 - attribution quality summary added to reports
 - process-tree membership hardened against PID reuse false positives
 - first-screen report summary moved above raw tables and tuned for quick scanning
+- risk analyzer expanded for AI coding sessions and covered by tests
 - running app picker added for friendlier `record codex --watch .` style workflows
 - app-specific AI profiles added on top of the generic `ai-code` defaults
 - automatic report opening added with `--no-open` escape hatch
@@ -128,17 +130,17 @@ Sensitive paths touched: .env
 Shells spawned: PowerShell
 ```
 
-### 2. Better Risk Observations
+### 2. Persistence and Cleanup Polish
 
-Goal: make the top of the report feel opinionated.
+Goal: make the top of the report explain whether an app tried to stick around or left obvious cleanup behind.
 
 Build:
 
-- persistence-oriented registry detections beyond current keys
+- persistence-oriented registry detections beyond current `Run` / `RunOnce` keys
+- startup folder, scheduled task, service, protocol handler, and file association checks
 - startup/persistence summary section
-- higher-signal sensitive access findings
-- shell spawn and package install findings tuned for AI sessions
-- cache growth / temp growth thresholds
+- safer cache/temp cleanup classification
+- clearer `cleanup.ps1` review comments
 
 Success looks like the first screen answering:
 
@@ -149,6 +151,7 @@ Big picture:
 - spawned PowerShell
 - ran 6 git commands
 - added no startup persistence
+- left 800 MB likely cache
 ```
 
 ## Phase 2

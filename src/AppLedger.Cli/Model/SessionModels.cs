@@ -39,7 +39,7 @@ internal sealed record SessionReport(
         var normalizedFileEvents = AttachProcessIdentities(FileEventMerger.NormalizeForSession(fileEvents), processLookup);
         var normalizedNetworkEvents = AttachProcessIdentities(NetworkResolver.Enrich(networkEvents), processLookup);
         var topFolders = BuildFolderImpact(normalizedFileEvents);
-        var findings = Analyzer.Find(normalizedFileEvents, processes, normalizedNetworkEvents, registryEvents, topFolders);
+        var findings = Analyzer.Find(watchRoots, watchAll, normalizedFileEvents, processes, normalizedNetworkEvents, registryEvents, topFolders);
         var aiActivity = AiCodingAnalyzer.Build(watchRoots, normalizedFileEvents, processes);
         var activityOverview = SessionActivityAnalyzer.Build(watchRoots, watchAll, normalizedFileEvents, normalizedNetworkEvents, aiActivity, findings);
         var networkOverview = NetworkSummaryAnalyzer.Build(normalizedNetworkEvents, processes);
@@ -83,7 +83,7 @@ internal sealed record SessionReport(
         var normalizedFileEvents = AttachProcessIdentities(FileEventMerger.NormalizeForSession(session.FileEvents), processLookup);
         var normalizedNetworkEvents = AttachProcessIdentities(NetworkResolver.Enrich(session.NetworkEvents), processLookup);
         var topFolders = BuildFolderImpact(normalizedFileEvents);
-        var findings = Analyzer.Find(normalizedFileEvents, session.Processes, normalizedNetworkEvents, session.RegistryEvents, topFolders);
+        var findings = Analyzer.Find(session.WatchRoots, session.WatchAll, normalizedFileEvents, session.Processes, normalizedNetworkEvents, session.RegistryEvents, topFolders);
         var aiActivity = AiCodingAnalyzer.Build(session.WatchRoots, normalizedFileEvents, session.Processes);
         var activityOverview = SessionActivityAnalyzer.Build(session.WatchRoots, session.WatchAll, normalizedFileEvents, normalizedNetworkEvents, aiActivity, findings);
         var networkOverview = NetworkSummaryAnalyzer.Build(normalizedNetworkEvents, session.Processes);

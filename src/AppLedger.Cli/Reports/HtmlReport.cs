@@ -26,6 +26,9 @@ internal static class HtmlReport
         var activityBuckets = string.Join(Environment.NewLine, activityOverview.Buckets.Select(RenderActivityBucket));
         var networkDestinations = string.Join(Environment.NewLine, networkOverview.Destinations.Select(RenderNetworkDestinationRow));
         var networkProcesses = string.Join(Environment.NewLine, networkOverview.Processes.Select(RenderNetworkProcessRow));
+        var cleanupPlan = CleanupPlanner.Build(session);
+        var cleanupSafeRows = string.Join(Environment.NewLine, cleanupPlan.Safe.Select(RenderCleanupCandidateRow));
+        var cleanupReviewRows = string.Join(Environment.NewLine, cleanupPlan.Review.Select(RenderCleanupCandidateRow));
         var captureSettings = session.CaptureSettings ?? SessionCaptureSettings.Default(session.WatchAll);
         var captureSettingsRows = RenderCaptureSettingsRows(captureSettings);
         var knownBytes = RenderKnownBytes(session);
@@ -143,6 +146,21 @@ internal static class HtmlReport
             <section>
               <h2>Risky Observations</h2>
               {{(session.Findings.Count == 0 ? "<p class=\"muted\">No risky observations from the Phase 1 analyzers.</p>" : $"<ul class=\"findings\">{findings}</ul>")}}
+            </section>
+
+            <section>
+              <h2>Cleanup Guidance</h2>
+              <div class="grid">
+                <div class="metric"><strong>{{Format.Bytes(cleanupPlan.SafeBytes)}}</strong><span>likely cache/temp cleanup</span></div>
+                <div class="metric"><strong>{{Format.Bytes(cleanupPlan.ReviewBytes)}}</strong><span>review-only app data</span></div>
+              </div>
+              {{(cleanupPlan.Safe.Count == 0 && cleanupPlan.Review.Count == 0
+                  ? "<p class=\"muted\">No cleanup candidates were derived from known folder growth. AppLedger does not recommend deleting watched roots, user documents, secrets, dependencies, .git internals, or system runtime folders.</p>"
+                  : $"""
+              <p class="muted">Cleanup is conservative. The generated cleanup.ps1 keeps every delete command commented out, and app-data entries may include settings or login state.</p>
+              {(cleanupPlan.Safe.Count == 0 ? "<p class=\"muted\">No likely cache/temp cleanup candidates detected.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Likely Safe</th><th>Category</th><th>Events</th><th>Known Growth</th><th>Reason</th></tr></thead><tbody>{cleanupSafeRows}</tbody></table></div>")}
+              {(cleanupPlan.Review.Count == 0 ? "" : $"<div style=\"height:12px\"></div><div class=\"panel\"><table><thead><tr><th>Review First</th><th>Category</th><th>Events</th><th>Known Growth</th><th>Reason</th></tr></thead><tbody>{cleanupReviewRows}</tbody></table></div>")}
+              """)}}
             </section>
 
             <section>
@@ -465,6 +483,9 @@ internal static class HtmlReport
             : string.Join("<br>", item.Destinations.Select(destination => $"<code>{Esc(destination)}</code>"));
         return $"<tr><td>{Esc(item.ProcessName)}</td><td>{item.ConnectionCount:N0}</td><td>{item.DestinationCount:N0}</td><td>{examples}</td></tr>";
     }
+
+    private static string RenderCleanupCandidateRow(CleanupCandidate candidate) =>
+        $"<tr><td><code>{Esc(candidate.Path)}</code></td><td>{Esc(candidate.Category)}</td><td>{candidate.FileCount:N0}</td><td>{Format.Bytes(candidate.BytesAdded)}</td><td>{Esc(candidate.Reason)}</td></tr>";
 
     private static string RenderActivityBucket(ActivityBucketSummary bucket)
     {

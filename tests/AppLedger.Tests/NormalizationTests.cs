@@ -305,6 +305,57 @@ public sealed class NormalizationTests
     }
 
     [Fact]
+    public void Analyzer_FindsPersistenceRegistryAndStartupFolderChanges()
+    {
+        var startupPath = @"C:\Users\Anas\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\agent.lnk";
+        var findings = Analyzer.Find(
+            [],
+            watchAll: true,
+            [Live(FileEventKind.Created, startupPath, observedAt: At(58), processId: 100, processName: "installer.exe")],
+            [],
+            [],
+            [
+                new RegistryEvent(RegistryEventKind.Created, @"CurrentUser\Software\Microsoft\Windows\CurrentVersion\Run\Agent", null, "agent.exe"),
+                new RegistryEvent(RegistryEventKind.Modified, @"LocalMachine\SYSTEM\CurrentControlSet\Services\AgentSvc\ImagePath", "old.exe", "new.exe"),
+                new RegistryEvent(RegistryEventKind.Created, @"LocalMachine\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\Agent\Id", null, "{id}"),
+                new RegistryEvent(RegistryEventKind.Created, @"CurrentUser\Software\Classes\agent\URL Protocol", null, ""),
+                new RegistryEvent(RegistryEventKind.Modified, @"CurrentUser\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.txt\UserChoice\ProgId", "txtfile", "agent.file")
+            ],
+            []);
+
+        Assert.Contains(findings, finding => finding.Severity == "high" && finding.Title == "Startup folder persistence change");
+        Assert.Contains(findings, finding => finding.Severity == "high" && finding.Title == "Startup persistence change");
+        Assert.Contains(findings, finding => finding.Severity == "high" && finding.Title == "Windows service persistence change");
+        Assert.Contains(findings, finding => finding.Severity == "high" && finding.Title == "Scheduled task persistence change");
+        Assert.Contains(findings, finding => finding.Severity == "medium" && finding.Title == "Protocol handler change");
+        Assert.Contains(findings, finding => finding.Severity == "medium" && finding.Title == "File association change");
+    }
+
+    [Fact]
+    public void CleanupPlanner_GroupsSafeAndReviewCandidates()
+    {
+        var session = EmptySession() with
+        {
+            TopFolders =
+            [
+                new FolderImpact(@"C:\Users\Anas\AppData\Local\Temp\app", 4, 1024, "temp"),
+                new FolderImpact(@"C:\Users\Anas\AppData\Roaming\Codex", 2, 2048, "app-data"),
+                new FolderImpact(@"C:\Users\Anas\Documents\repo", 1, 4096, "documents")
+            ]
+        };
+
+        var plan = CleanupPlanner.Build(session);
+        var script = CleanupScript.Render(session);
+
+        Assert.Single(plan.Safe);
+        Assert.Single(plan.Review);
+        Assert.Contains("Safe cleanup candidates", script, StringComparison.Ordinal);
+        Assert.Contains("Review before deleting", script, StringComparison.Ordinal);
+        Assert.Contains("Remove-Item -LiteralPath", script, StringComparison.Ordinal);
+        Assert.DoesNotContain(@"C:\Users\Anas\Documents\repo", script, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void HtmlReport_RendersBigPictureAndActivityBuckets()
     {
         var file = Live(FileEventKind.Modified, @"C:\Users\Anas\AppData\Local\Temp\session.tmp", observedAt: At(60), processId: 10, processName: "codex.exe");
@@ -337,6 +388,25 @@ public sealed class NormalizationTests
         Assert.Contains("no attributed events", html, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Mostly temp churn", html, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("known bytes changed", html, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void HtmlReport_RendersCleanupGuidance()
+    {
+        var session = EmptySession() with
+        {
+            TopFolders =
+            [
+                new FolderImpact(@"C:\Users\Anas\AppData\Local\Temp\app", 4, 1024, "temp"),
+                new FolderImpact(@"C:\Users\Anas\AppData\Roaming\Codex", 2, 2048, "app-data")
+            ]
+        };
+
+        var html = HtmlReport.Render(session);
+
+        Assert.Contains("Cleanup Guidance", html, StringComparison.Ordinal);
+        Assert.Contains("likely cache/temp cleanup", html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("review-only app data", html, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -627,6 +697,27 @@ public sealed class NormalizationTests
 
     private static FileSnapshot EmptySnapshot() =>
         new(At(0), [], [], []);
+
+    private static SessionReport EmptySession() =>
+        new(
+            App: @"C:\Program Files\App\App.exe",
+            Arguments: "",
+            StartedAt: At(1),
+            EndedAt: At(2),
+            WatchRoots: [],
+            WatchAll: true,
+            Summary: new SessionSummary(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+            FileEvents: [],
+            Processes: [],
+            NetworkEvents: [],
+            RegistryEvents: [],
+            Findings: [],
+            TopFolders: [],
+            AiActivity: EmptyAi(),
+            SnapshotErrors: [],
+            ActivityOverview: new SessionActivityOverview("No high-signal activity summary was derived from this session.", [], []),
+            NetworkOverview: new SessionNetworkOverview([], []),
+            CaptureSettings: SessionCaptureSettings.Default(watchAll: true));
 
     private static DateTimeOffset At(int second) =>
         new DateTimeOffset(2026, 4, 27, 12, 0, 0, TimeSpan.Zero).AddSeconds(second);

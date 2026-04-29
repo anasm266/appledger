@@ -28,8 +28,10 @@ Current Phase 1 capabilities:
 - enrich network endpoints with cached DNS / reverse lookup hostnames when possible
 - group network activity by destination and process
 - capture command lines from the observed process tree
-- detect common startup `Run` and `RunOnce` registry changes
+- detect common startup, service, scheduled task, protocol handler, and file association registry changes
+- detect writes to Windows Startup folders
 - emit higher-signal risk observations for secret-like paths, shell spawns, package installs, network-transfer tools, external endpoints, and user-facing writes outside watched roots
+- show cleanup guidance in the report and generate a grouped, commented `cleanup.ps1`
 - summarize whole-app sessions with a top-level "Big Picture" and activity buckets
 - show a first-screen report summary with risk state, priority observations, capture/profile state, attribution quality, watched-root changes, commands, and network groups
 - label watched-root changes separately from true source/project intent
@@ -305,8 +307,8 @@ What is not done yet:
 
 - network byte counts
 - packet contents
-- broad registry diffs beyond current startup keys
-- scheduled tasks, services, protocol handlers, and file associations
+- broad whole-registry diffs
+- direct scheduled-task XML/action parsing beyond high-value registry task-cache detection
 - GUI desktop app
 - guard/block mode
 - kernel driver or minifilter collector
@@ -343,6 +345,8 @@ Recent Phase 1 progress:
 - include/exclude path filters shown in capture settings and applied before event caps
 - first-screen report polish with an executive summary and priority cards above raw tables
 - stronger risk findings for AI coding sessions, including `.env`, SSH/credential files, PowerShell bypass, package installs, network tools, external endpoints, and outside-root writes
+- broader persistence findings for startup registry, Startup folders, services, scheduled tasks, protocol handlers, and file associations
+- cleanup guidance section with likely-safe temp/cache candidates and review-only app-data candidates
 - app-specific AI profiles for Codex, Claude, Cursor, and VS Code
 - automatic report opening with `--no-open` for scripted runs
 - report wording now distinguishes watched-root changes from source/project files and labels byte totals as known bytes

@@ -41,6 +41,7 @@ Implemented:
 - startup `Run` / `RunOnce` registry monitoring
 - HTML, JSON, CSV, SQLite, AI activity, and cleanup outputs
 - first-screen whole-app summary via `Big Picture` and `Activity Buckets`
+- polished first-screen HTML summary with risk state, priority observations, and compact session cards
 - capture settings displayed in reports so disabled categories are clear
 - watched-root changes are labeled separately from source/project intent
 - byte totals are labeled as known bytes because live ETW events often lack size deltas
@@ -71,6 +72,7 @@ Recent Phase 1 fixes:
 - process identity fields added across JSON, CSV, SQLite, and HTML report output
 - attribution quality summary added to reports
 - process-tree membership hardened against PID reuse false positives
+- first-screen report summary moved above raw tables and tuned for quick scanning
 - running app picker added for friendlier `record codex --watch .` style workflows
 - app-specific AI profiles added on top of the generic `ai-code` defaults
 - automatic report opening added with `--no-open` escape hatch
@@ -126,18 +128,7 @@ Sensitive paths touched: .env
 Shells spawned: PowerShell
 ```
 
-### 2. Report First-Screen Polish
-
-Goal: make the first report viewport explain the session faster.
-
-Build:
-
-- sharper top-level "what happened" phrasing
-- clearer distinction between project changes, cache churn, and tool/runtime noise
-- stronger visual ordering for risky observations
-- fewer raw tables above the fold
-
-### 3. Better Risk Observations
+### 2. Better Risk Observations
 
 Goal: make the top of the report feel opinionated.
 

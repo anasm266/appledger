@@ -37,6 +37,9 @@ internal static class HtmlReport
             : "file reads disabled";
         var attribution = SummarizeAttribution(session);
         var attributionRows = RenderAttributionRows(attribution);
+        var firstScreenCards = RenderFirstScreenCards(session, ai, networkOverview, attribution, captureSettings);
+        var priorityFindings = RenderPriorityFindings(session.Findings);
+        var summaryTone = SummaryTone(session.Findings);
 
         return $$"""
         <!doctype html>
@@ -46,14 +49,35 @@ internal static class HtmlReport
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <title>AppLedger Report - {{appName}}</title>
           <style>
-            :root { color-scheme: light; --ink:#17202a; --muted:#627083; --line:#d8dee7; --bg:#f6f8fb; --panel:#fff; --accent:#1664d9; --warn:#b25b00; --bad:#a11919; }
+            :root { color-scheme: light; --ink:#17202a; --muted:#627083; --line:#d8dee7; --bg:#f6f8fb; --panel:#fff; --accent:#1664d9; --ok:#157347; --warn:#b25b00; --bad:#a11919; }
             * { box-sizing:border-box; }
             body { margin:0; font-family:Segoe UI, Arial, sans-serif; color:var(--ink); background:var(--bg); }
-            header { background:#101820; color:#fff; padding:32px 40px; }
+            header { background:#101820; color:#fff; padding:26px 40px; }
+            header h1 { margin:0; font-size:30px; }
             header p { color:#c7d1dc; margin:8px 0 0; }
             main { max-width:1180px; margin:0 auto; padding:28px 24px 60px; }
             section { margin:22px 0; }
             .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+            .hero { background:var(--panel); border:1px solid var(--line); border-top:5px solid var(--ok); border-radius:8px; padding:22px; }
+            .hero.medium { border-top-color:var(--warn); }
+            .hero.high { border-top-color:var(--bad); }
+            .hero h2 { font-size:24px; margin-bottom:8px; }
+            .hero p { margin:0 0 12px; }
+            .hero-grid { display:grid; grid-template-columns:minmax(260px,1.5fr) minmax(240px,1fr); gap:18px; align-items:start; }
+            .summary-cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+            .summary-card { border:1px solid var(--line); border-radius:8px; padding:12px; background:#fbfcfe; min-height:86px; }
+            .summary-card strong { display:block; font-size:22px; line-height:1.15; }
+            .summary-card span { color:var(--muted); font-size:12px; }
+            .summary-card.ok { border-left:4px solid var(--ok); }
+            .summary-card.medium { border-left:4px solid var(--warn); }
+            .summary-card.high { border-left:4px solid var(--bad); }
+            .status { display:inline-block; border-radius:999px; padding:4px 10px; font-size:12px; font-weight:700; margin-bottom:8px; background:#eaf6ef; color:var(--ok); }
+            .status.medium { background:#fff2df; color:var(--warn); }
+            .status.high { background:#fdecec; color:var(--bad); }
+            .lede { font-size:17px; line-height:1.45; }
+            .summary-list { margin:10px 0 0; padding-left:20px; color:#364454; }
+            .priority { margin:12px 0 0; padding:12px; border:1px solid var(--line); border-radius:8px; background:#fbfcfe; }
+            .priority ul { margin:8px 0 0; padding-left:18px; }
             .metric { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; }
             .metric strong { display:block; font-size:28px; }
             .metric span { color:var(--muted); font-size:13px; }
@@ -70,6 +94,12 @@ internal static class HtmlReport
             ul.findings li.medium { border-left-color:var(--warn); }
             ul.findings span { color:var(--muted); }
             .muted { color:var(--muted); }
+            @media (max-width: 760px) {
+              header { padding:22px 24px; }
+              main { padding:20px 16px 44px; }
+              .hero-grid { grid-template-columns:1fr; }
+              .summary-cards { grid-template-columns:1fr; }
+            }
           </style>
         </head>
         <body>
@@ -78,6 +108,21 @@ internal static class HtmlReport
             <p>{{Esc(session.StartedAt.ToString("g"))}} - {{Esc(session.EndedAt.ToString("g"))}} - {{Esc(RenderWatchScope(session))}}</p>
           </header>
           <main>
+            <section class="hero {{summaryTone}}">
+              <div class="hero-grid">
+                <div>
+                  <span class="status {{summaryTone}}">{{Esc(SummaryStatusLabel(session.Findings))}}</span>
+                  <h2>Big Picture</h2>
+                  <p class="lede"><strong>{{Esc(activityOverview.Headline)}}</strong></p>
+                  {{(activityOverview.Highlights.Count == 0 ? "<p class=\"muted\">No extra highlights were derived for this session.</p>" : $"<ul class=\"summary-list\">{activityHighlights}</ul>")}}
+                  {{priorityFindings}}
+                </div>
+                <div class="summary-cards">
+                  {{firstScreenCards}}
+                </div>
+              </div>
+            </section>
+
             <section class="grid">
               <div class="metric"><strong>{{fileReadMetricValue}}</strong><span>{{fileReadMetricLabel}}</span></div>
               <div class="metric"><strong>{{session.Summary.FilesCreated:N0}}</strong><span>files created</span></div>
@@ -89,30 +134,6 @@ internal static class HtmlReport
               <div class="metric"><strong>{{session.Summary.NetworkConnectionCount:N0}}</strong><span>network endpoints</span></div>
             </section>
             {{(knownBytes.ShowNote ? "<p class=\"muted\">Live ETW file events often do not include file-size deltas, so byte totals only include known snapshot or enriched size data.</p>" : "")}}
-
-            <section>
-              <h2>Capture Settings</h2>
-              <div class="panel"><table><tbody>{{captureSettingsRows}}</tbody></table></div>
-            </section>
-
-            <section>
-              <h2>Attribution Quality</h2>
-              <div class="grid">
-                <div class="metric"><strong>{{attribution.HighPercent:0.#}}%</strong><span>high confidence</span></div>
-                <div class="metric"><strong>{{attribution.MediumPercent:0.#}}%</strong><span>medium confidence</span></div>
-                <div class="metric"><strong>{{attribution.LowPercent:0.#}}%</strong><span>low confidence</span></div>
-                <div class="metric"><strong>{{attribution.Total:N0}}</strong><span>attributed events</span></div>
-              </div>
-              <div class="panel"><table><thead><tr><th>Confidence</th><th>Events</th><th>Share</th></tr></thead><tbody>{{attributionRows}}</tbody></table></div>
-            </section>
-
-            <section>
-              <h2>Big Picture</h2>
-              <div class="panel"><div style="padding:16px 18px;">
-                <p><strong>{{Esc(activityOverview.Headline)}}</strong></p>
-                {{(activityOverview.Highlights.Count == 0 ? "<p class=\"muted\">No extra highlights were derived for this session.</p>" : $"<ul>{activityHighlights}</ul>")}}
-              </div></div>
-            </section>
 
             <section>
               <h2>Activity Buckets</h2>
@@ -134,6 +155,22 @@ internal static class HtmlReport
                 <div class="metric"><strong>{{ai.SensitiveAccesses.Count:N0}}</strong><span>sensitive accesses</span></div>
                 <div class="metric"><strong>{{ai.ProcessGroups.Count:N0}}</strong><span>process groups</span></div>
               </div>
+            </section>
+
+            <section>
+              <h2>Attribution Quality</h2>
+              <div class="grid">
+                <div class="metric"><strong>{{attribution.HighPercent:0.#}}%</strong><span>high confidence</span></div>
+                <div class="metric"><strong>{{attribution.MediumPercent:0.#}}%</strong><span>medium confidence</span></div>
+                <div class="metric"><strong>{{attribution.LowPercent:0.#}}%</strong><span>low confidence</span></div>
+                <div class="metric"><strong>{{attribution.Total:N0}}</strong><span>attributed events</span></div>
+              </div>
+              <div class="panel"><table><thead><tr><th>Confidence</th><th>Events</th><th>Share</th></tr></thead><tbody>{{attributionRows}}</tbody></table></div>
+            </section>
+
+            <section>
+              <h2>Capture Settings</h2>
+              <div class="panel"><table><tbody>{{captureSettingsRows}}</tbody></table></div>
             </section>
 
             <section>
@@ -258,6 +295,115 @@ internal static class HtmlReport
 
     private static string RenderNetworkRow(NetworkEvent item) =>
         $"<tr><td>{RenderProcessIdentity(item.ProcessId, null, item.Process, item.Attribution)}</td><td>{Esc(NetworkResolver.DisplayHostLabel(item))}</td><td>{Esc(item.RemoteAddress)}:{item.RemotePort}</td><td>{Esc(item.State)}</td></tr>";
+
+    private static string RenderFirstScreenCards(
+        SessionReport session,
+        AiCodingActivity ai,
+        SessionNetworkOverview networkOverview,
+        AttributionSummary attribution,
+        SessionCaptureSettings captureSettings)
+    {
+        var riskCount = session.Findings.Count(finding => finding.Severity is "high" or "medium");
+        var riskTone = session.Findings.Any(finding => finding.Severity == "high")
+            ? "high"
+            : riskCount > 0 ? "medium" : "ok";
+        var riskValue = riskCount == 0 ? "Clear" : riskCount.ToString("N0", CultureInfo.InvariantCulture);
+        var riskLabel = riskCount == 0 ? "no medium/high observations" : "medium/high observations";
+        var projectLabel = session.WatchRoots.Count == 0
+            ? "no watched root snapshot"
+            : "watched-root paths changed";
+        var commandLabel = BuildCommandCardLabel(ai.Commands);
+        var networkLabel = networkOverview.Destinations.Count == 1 ? "destination group" : "destination groups";
+        var attributionValue = attribution.Total == 0
+            ? "N/A"
+            : $"{attribution.HighPercent:0.#}%";
+        var attributionLabel = attribution.Total == 0
+            ? "no attributed events"
+            : "high-confidence attribution";
+        var readsLabel = captureSettings.CaptureReads
+            ? "file reads captured"
+            : "file reads intentionally off";
+
+        var cards = new[]
+        {
+            RenderSummaryCard(riskValue, riskLabel, riskTone),
+            RenderSummaryCard(ai.ProjectChanges.TotalChanged.ToString("N0", CultureInfo.InvariantCulture), projectLabel, "ok"),
+            RenderSummaryCard(ai.Commands.Total.ToString("N0", CultureInfo.InvariantCulture), commandLabel, "ok"),
+            RenderSummaryCard(networkOverview.Destinations.Count.ToString("N0", CultureInfo.InvariantCulture), networkLabel, "ok"),
+            RenderSummaryCard(attributionValue, attributionLabel, attribution.HighPercent < 90 && attribution.Total > 0 ? "medium" : "ok"),
+            RenderSummaryCard(captureSettings.Profile ?? "none", readsLabel, captureSettings.CaptureReads ? "ok" : "medium")
+        };
+
+        return string.Join(Environment.NewLine, cards);
+    }
+
+    private static string RenderSummaryCard(string value, string label, string tone) =>
+        $"<div class=\"summary-card {Esc(tone)}\"><strong>{Esc(value)}</strong><span>{Esc(label)}</span></div>";
+
+    private static string BuildCommandCardLabel(CommandSummary commands)
+    {
+        var parts = new List<string>();
+        if (commands.GitCommands > 0)
+        {
+            parts.Add($"{commands.GitCommands:N0} git");
+        }
+
+        if (commands.PackageInstalls > 0)
+        {
+            parts.Add($"{commands.PackageInstalls:N0} package");
+        }
+
+        if (commands.TestCommands > 0)
+        {
+            parts.Add($"{commands.TestCommands:N0} test");
+        }
+
+        return parts.Count == 0
+            ? "developer commands captured"
+            : string.Join(", ", parts);
+    }
+
+    private static string RenderPriorityFindings(IReadOnlyList<Finding> findings)
+    {
+        var priority = findings
+            .Where(finding => finding.Severity is "high" or "medium")
+            .OrderBy(finding => finding.Severity == "high" ? 0 : 1)
+            .Take(3)
+            .ToList();
+
+        if (priority.Count == 0)
+        {
+            return "<div class=\"priority\"><strong>Risk check</strong><p class=\"muted\">No medium or high observations from the current analyzers.</p></div>";
+        }
+
+        var items = string.Join(Environment.NewLine, priority.Select(finding =>
+            $"<li><strong>{Esc(finding.Title)}</strong><br><span class=\"muted\">{Esc(finding.Detail)}</span></li>"));
+        return $"<div class=\"priority\"><strong>Priority observations</strong><ul>{items}</ul></div>";
+    }
+
+    private static string SummaryTone(IReadOnlyList<Finding> findings)
+    {
+        if (findings.Any(finding => finding.Severity == "high"))
+        {
+            return "high";
+        }
+
+        return findings.Any(finding => finding.Severity == "medium")
+            ? "medium"
+            : "ok";
+    }
+
+    private static string SummaryStatusLabel(IReadOnlyList<Finding> findings)
+    {
+        if (findings.Any(finding => finding.Severity == "high"))
+        {
+            return "High-priority observations";
+        }
+
+        return findings.Any(finding => finding.Severity == "medium")
+            ? "Review recommended"
+            : "No medium/high observations";
+    }
 
     private static string RenderProcessRow(ProcessRecord process)
     {

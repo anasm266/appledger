@@ -25,6 +25,7 @@ Working now:
 - sampled network endpoints with hostname enrichment when available
 - grouped network destination/process summaries
 - full-app summary layer with `Big Picture` and `Activity Buckets`
+- first-screen HTML report summary with risk state, priority observations, and compact session cards
 - watched-root changes labeled separately from source/project intent
 - known-byte wording for ETW sessions where size deltas are unavailable
 - report-visible capture settings, including disabled file-read capture
@@ -69,16 +70,7 @@ appledger apps --running codex
 appledger attach codex --profile ai-code
 ```
 
-### 2. Report First-Screen Polish
-
-Build:
-
-- sharper top-level "what happened" phrasing
-- better ordering of risk, watched-root changes, commands, and sensitive access
-- fewer raw tables above the fold
-- a cleaner screenshot-ready first viewport
-
-### 3. Better Risk Observations
+### 2. Better Risk Observations
 
 Build:
 

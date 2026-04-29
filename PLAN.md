@@ -34,6 +34,8 @@ Working now:
 - attribution confidence and reason in JSON, CSV, SQLite, and HTML reports
 - higher-signal risk observations for AI coding sessions
 - broader persistence risk observations for startup registry, Startup folders, services, scheduled tasks, protocol handlers, and file associations
+- dedicated Persistence Summary in HTML with explicit clean-state wording
+- service image-path and scheduled task command/argument details where available
 - conservative cleanup guidance in HTML and `cleanup.ps1`
 - active process-tree membership guarded against PID reuse before ETW/network sync
 - HTML / JSON / CSV / SQLite outputs
@@ -79,15 +81,18 @@ Built:
 
 - broader startup/persistence checks
 - Startup folder, scheduled task, service, protocol handler, and file association detection
+- dedicated persistence section in HTML
+- clean-state wording such as "Added no startup persistence"
+- scheduled task command/action extraction where available
+- service image-path summaries
 - cache/temp cleanup grouping
 - conservative cleanup script annotations
 
 Next:
 
-- dedicated persistence section in HTML
-- clean-state wording such as "added no startup persistence"
-- scheduled task command/action extraction where available
-- service image-path and start-mode summaries
+- separate persistence export block in `session.json`
+- scheduled task trigger/condition summaries where useful
+- service start-mode change summaries
 
 ## Not Next
 

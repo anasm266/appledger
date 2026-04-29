@@ -135,6 +135,8 @@ internal static class RegistrySnapshot
         {
             values[$"{RegistryHive.LocalMachine}\\{taskTreePath}\\<error>"] = ex.Message;
         }
+
+        CaptureScheduledTaskFiles(values);
     }
 
     private static void CaptureTaskTree(Dictionary<string, string?> values, RegistryHive hive, string path, RegistryKey key, ref int captured)
@@ -160,6 +162,86 @@ internal static class RegistrySnapshot
             {
                 CaptureTaskTree(values, hive, $@"{path}\{childName}", child, ref captured);
             }
+        }
+    }
+
+    private static void CaptureScheduledTaskFiles(Dictionary<string, string?> values)
+    {
+        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "Tasks");
+        try
+        {
+            if (!Directory.Exists(root))
+            {
+                return;
+            }
+
+            var captured = 0;
+            var options = new System.IO.EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                IgnoreInaccessible = true
+            };
+
+            foreach (var file in Directory.EnumerateFiles(root, "*", options))
+            {
+                if (captured >= MaxTaskKeys)
+                {
+                    return;
+                }
+
+                CaptureScheduledTaskFile(values, root, file);
+                captured++;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException)
+        {
+            values[$"{RegistryHive.LocalMachine}\\ScheduledTasks\\<file-error>"] = ex.Message;
+        }
+    }
+
+    private static void CaptureScheduledTaskFile(Dictionary<string, string?> values, string root, string file)
+    {
+        try
+        {
+            using var stream = File.OpenRead(file);
+            var document = System.Xml.Linq.XDocument.Load(stream);
+            var relative = Path.GetRelativePath(root, file).Replace('/', '\\');
+            var taskPath = $@"ScheduledTasks\{relative}";
+
+            var execs = document
+                .Descendants()
+                .Where(element => element.Name.LocalName.Equals("Exec", StringComparison.OrdinalIgnoreCase))
+                .Take(10)
+                .ToList();
+
+            for (var index = 0; index < execs.Count; index++)
+            {
+                var exec = execs[index];
+                var suffix = execs.Count == 1 ? "" : $".{index + 1}";
+                AddValue(values, RegistryHive.LocalMachine, taskPath, $"Command{suffix}", ChildValue(exec, "Command"));
+                AddValue(values, RegistryHive.LocalMachine, taskPath, $"Arguments{suffix}", ChildValue(exec, "Arguments"));
+                AddValue(values, RegistryHive.LocalMachine, taskPath, $"WorkingDirectory{suffix}", ChildValue(exec, "WorkingDirectory"));
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or System.Xml.XmlException)
+        {
+            var relative = SafeRelativePath(root, file);
+            values[$"{RegistryHive.LocalMachine}\\ScheduledTasks\\{relative}\\<read-error>"] = ex.Message;
+        }
+    }
+
+    private static string? ChildValue(System.Xml.Linq.XElement parent, string localName) =>
+        parent.Elements().FirstOrDefault(element => element.Name.LocalName.Equals(localName, StringComparison.OrdinalIgnoreCase))?.Value;
+
+    private static string SafeRelativePath(string root, string file)
+    {
+        try
+        {
+            return Path.GetRelativePath(root, file).Replace('/', '\\');
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+        {
+            return Path.GetFileName(file);
         }
     }
 

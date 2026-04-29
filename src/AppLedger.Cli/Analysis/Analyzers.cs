@@ -3,6 +3,8 @@
 internal static class Analyzer
 {
     public static List<Finding> Find(
+        IReadOnlyList<string> watchRoots,
+        bool watchAll,
         IReadOnlyList<FileEvent> files,
         IReadOnlyList<ProcessRecord> processes,
         IReadOnlyList<NetworkEvent> network,
@@ -11,6 +13,18 @@ internal static class Analyzer
     {
         var findings = new List<Finding>();
 
+        AddSensitivePathFindings(findings, files);
+        AddProcessFindings(findings, processes);
+        AddRegistryFindings(findings, registry);
+        AddFileScopeFindings(findings, watchRoots, watchAll, files);
+        AddStorageFindings(findings, topFolders);
+        AddNetworkFindings(findings, network);
+
+        return findings;
+    }
+
+    private static void AddSensitivePathFindings(List<Finding> findings, IReadOnlyList<FileEvent> files)
+    {
         foreach (var group in files
             .Where(f => f.IsSensitive && !PathClassifier.IsSystemRuntimeNoise(f.Path))
             .GroupBy(f => NormalizePath(f.Path), StringComparer.OrdinalIgnoreCase)
@@ -21,35 +35,107 @@ internal static class Analyzer
                 .Select(file => file.Kind.ToString().ToLowerInvariant())
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(action => action, StringComparer.OrdinalIgnoreCase));
-            findings.Add(new Finding("medium", "Sensitive path touched", $"{actions} {first.Path}"));
+            var severity = IsHighValueSecretPath(first.Path) || group.Any(file => file.Kind is FileEventKind.Modified or FileEventKind.Deleted or FileEventKind.Renamed)
+                ? "high"
+                : "medium";
+            AddFinding(findings, severity, SensitiveTitle(first.Path), $"{actions} {first.Path}");
+        }
+    }
+
+    private static void AddProcessFindings(List<Finding> findings, IReadOnlyList<ProcessRecord> processes)
+    {
+        foreach (var process in processes.Where(IsPowerShellBypass).Take(10))
+        {
+            AddFinding(findings, "high", "PowerShell policy bypass", process.CommandLine ?? process.Name);
         }
 
-        foreach (var process in processes.Where(p => p.CommandLine?.Contains("ExecutionPolicy Bypass", StringComparison.OrdinalIgnoreCase) == true))
+        foreach (var process in processes.Where(IsEncodedPowerShell).Take(10))
         {
-            findings.Add(new Finding("medium", "PowerShell execution policy bypass", process.CommandLine ?? process.Name));
+            AddFinding(findings, "medium", "Encoded PowerShell command", SanitizeCommandLine(process.CommandLine) ?? process.Name);
+        }
+
+        foreach (var process in processes.Where(IsShellProcess).Take(10))
+        {
+            AddFinding(findings, "medium", "Shell process spawned", SanitizeCommandLine(process.CommandLine) ?? process.Name);
         }
 
         foreach (var process in processes.Where(p => IsPackageInstall(p.CommandLine)).Take(10))
         {
-            findings.Add(new Finding("info", "Package install command", process.CommandLine ?? process.Name));
+            AddFinding(findings, "medium", "Package install command", SanitizeCommandLine(process.CommandLine) ?? process.Name);
         }
 
+        foreach (var process in processes.Where(IsNetworkToolCommand).Take(10))
+        {
+            AddFinding(findings, "medium", "Network transfer tool used", SanitizeCommandLine(process.CommandLine) ?? process.Name);
+        }
+    }
+
+    private static void AddRegistryFindings(List<Finding> findings, IReadOnlyList<RegistryEvent> registry)
+    {
         foreach (var entry in registry.Where(r => r.Key.Contains("\\Run", StringComparison.OrdinalIgnoreCase)))
         {
-            findings.Add(new Finding("high", "Startup persistence registry change", $"{entry.Kind}: {entry.Key}"));
+            AddFinding(findings, "high", "Startup persistence registry change", $"{entry.Kind}: {entry.Key}");
+        }
+    }
+
+    private static void AddFileScopeFindings(List<Finding> findings, IReadOnlyList<string> watchRoots, bool watchAll, IReadOnlyList<FileEvent> files)
+    {
+        if (!watchAll || watchRoots.Count == 0)
+        {
+            return;
         }
 
+        var outsideWrites = files
+            .Where(file => file.Kind is FileEventKind.Created or FileEventKind.Modified or FileEventKind.Deleted or FileEventKind.Renamed)
+            .Where(file => IsUserFacingPath(file.Path) || (!string.IsNullOrWhiteSpace(file.RelatedPath) && IsUserFacingPath(file.RelatedPath)))
+            .Where(file => !PathClassifier.IsUnderAnyWatchRoot(file.Path, watchRoots)
+                && (string.IsNullOrWhiteSpace(file.RelatedPath) || !PathClassifier.IsUnderAnyWatchRoot(file.RelatedPath, watchRoots)))
+            .Where(file => !IsLowSignalWrite(file.Path))
+            .GroupBy(file => NormalizePath(file.RelatedPath ?? file.Path), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderBy(file => file.ObservedAt).First())
+            .Take(10)
+            .ToList();
+
+        if (outsideWrites.Count == 0)
+        {
+            return;
+        }
+
+        var examples = string.Join("; ", outsideWrites.Take(4).Select(file => file.RelatedPath ?? file.Path));
+        AddFinding(
+            findings,
+            "medium",
+            "User-facing write outside watched root",
+            $"{outsideWrites.Count:N0} write(s) outside watched roots. Examples: {examples}");
+    }
+
+    private static void AddStorageFindings(List<Finding> findings, IReadOnlyList<FolderImpact> topFolders)
+    {
         foreach (var folder in topFolders.Where(f => f.Category is "temp" or "app-data" && f.BytesAdded >= 100 * 1024 * 1024).Take(10))
         {
-            findings.Add(new Finding("info", "Large cache or temp growth", $"{Format.Bytes(folder.BytesAdded)} added under {folder.Path}"));
+            AddFinding(findings, "info", "Large cache or temp growth", $"{Format.Bytes(folder.BytesAdded)} added under {folder.Path}");
+        }
+    }
+
+    private static void AddNetworkFindings(List<Finding> findings, IReadOnlyList<NetworkEvent> network)
+    {
+        var external = network
+            .Where(item => IsExternalAddress(item.RemoteAddress))
+            .GroupBy(item => NetworkResolver.DisplayHost(item), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderBy(item => item.FirstSeen).First())
+            .OrderBy(item => NetworkResolver.DisplayHost(item), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (external.Count > 0)
+        {
+            var examples = string.Join(", ", external.Take(5).Select(NetworkResolver.DisplayHostLabel));
+            AddFinding(findings, "info", "External network destinations", $"{external.Count:N0} external destination group(s): {examples}");
         }
 
         if (network.Count > 25)
         {
-            findings.Add(new Finding("info", "Many network endpoints", $"{network.Count} distinct IPv4 TCP endpoints were observed."));
+            AddFinding(findings, "info", "Many network endpoints", $"{network.Count:N0} distinct IPv4 TCP endpoints were observed.");
         }
-
-        return findings;
     }
 
     private static string NormalizePath(string path)
@@ -62,6 +148,161 @@ internal static class Analyzer
         {
             return path;
         }
+    }
+
+    private static bool IsHighValueSecretPath(string path)
+    {
+        var normalized = path.Replace('/', '\\');
+        var fileName = Path.GetFileName(normalized);
+        return normalized.Contains("\\.ssh\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\.aws\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\.azure\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\.gnupg\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\.kube\\", StringComparison.OrdinalIgnoreCase)
+            || fileName.Equals(".env", StringComparison.OrdinalIgnoreCase)
+            || fileName.Equals(".npmrc", StringComparison.OrdinalIgnoreCase)
+            || fileName.Equals(".pypirc", StringComparison.OrdinalIgnoreCase)
+            || fileName.Contains("id_rsa", StringComparison.OrdinalIgnoreCase)
+            || fileName.Contains("credentials", StringComparison.OrdinalIgnoreCase)
+            || fileName.Contains("token", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string SensitiveTitle(string path)
+    {
+        var normalized = path.Replace('/', '\\');
+        var fileName = Path.GetFileName(normalized);
+        if (normalized.Contains("\\.ssh\\", StringComparison.OrdinalIgnoreCase) || fileName.Contains("id_rsa", StringComparison.OrdinalIgnoreCase))
+        {
+            return "SSH material touched";
+        }
+
+        if (fileName.Equals(".env", StringComparison.OrdinalIgnoreCase))
+        {
+            return ".env touched";
+        }
+
+        if (fileName.Equals(".npmrc", StringComparison.OrdinalIgnoreCase)
+            || fileName.Equals(".pypirc", StringComparison.OrdinalIgnoreCase)
+            || fileName.Contains("token", StringComparison.OrdinalIgnoreCase)
+            || fileName.Contains("credentials", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Credential file touched";
+        }
+
+        return "Sensitive path touched";
+    }
+
+    private static bool IsPowerShellBypass(ProcessRecord process) =>
+        process.CommandLine?.Contains("ExecutionPolicy Bypass", StringComparison.OrdinalIgnoreCase) == true;
+
+    private static bool IsEncodedPowerShell(ProcessRecord process) =>
+        IsPowerShellName(process.Name)
+        && process.CommandLine?.Contains("-EncodedCommand", StringComparison.OrdinalIgnoreCase) == true;
+
+    private static bool IsShellProcess(ProcessRecord process)
+    {
+        if (!IsShellName(process.Name))
+        {
+            return false;
+        }
+
+        var command = process.CommandLine ?? "";
+        return !command.Contains("Win32_Process | Select-Object", StringComparison.OrdinalIgnoreCase)
+            && !command.Contains("Long-lived PowerShell AST parser", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsNetworkToolCommand(ProcessRecord process)
+    {
+        var command = process.CommandLine ?? "";
+        var name = Path.GetFileNameWithoutExtension(process.Name);
+        return name.Equals("curl", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("wget", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("ssh", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("scp", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("sftp", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("rsync", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("nc", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("ncat", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("Invoke-WebRequest", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("Invoke-RestMethod", StringComparison.OrdinalIgnoreCase)
+            || command.Contains(" iwr ", StringComparison.OrdinalIgnoreCase)
+            || command.StartsWith("iwr ", StringComparison.OrdinalIgnoreCase)
+            || command.Contains(" curl ", StringComparison.OrdinalIgnoreCase)
+            || command.Contains(" wget ", StringComparison.OrdinalIgnoreCase)
+            || command.Contains(" ssh ", StringComparison.OrdinalIgnoreCase)
+            || command.Contains(" scp ", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsUserFacingPath(string path)
+    {
+        var category = PathClassifier.Classify(path);
+        return category is "documents" or "desktop" or "downloads" or "project-or-user" or "sensitive";
+    }
+
+    private static bool IsLowSignalWrite(string path)
+    {
+        var normalized = path.Replace('/', '\\');
+        return PathClassifier.IsSystemRuntimeNoise(path)
+            || normalized.Contains("\\.git\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\node_modules\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\AppData\\", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\Temp\\", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsExternalAddress(string address)
+    {
+        if (!IPAddress.TryParse(address, out var ip))
+        {
+            return false;
+        }
+
+        if (IPAddress.IsLoopback(ip))
+        {
+            return false;
+        }
+
+        var bytes = ip.GetAddressBytes();
+        return bytes.Length != 4
+            || !(bytes[0] == 10
+                || (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31)
+                || (bytes[0] == 192 && bytes[1] == 168)
+                || (bytes[0] == 169 && bytes[1] == 254));
+    }
+
+    private static bool IsShellName(string name) =>
+        IsPowerShellName(name) || name.Equals("cmd.exe", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsPowerShellName(string name) =>
+        name.Equals("powershell.exe", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("pwsh.exe", StringComparison.OrdinalIgnoreCase);
+
+    private static string? SanitizeCommandLine(string? commandLine)
+    {
+        if (string.IsNullOrWhiteSpace(commandLine))
+        {
+            return commandLine;
+        }
+
+        var encodedIndex = commandLine.IndexOf("-EncodedCommand", StringComparison.OrdinalIgnoreCase);
+        if (encodedIndex >= 0)
+        {
+            return commandLine[..encodedIndex].Trim() + " -EncodedCommand <base64>";
+        }
+
+        return commandLine.Length <= 320 ? commandLine : commandLine[..317] + "...";
+    }
+
+    private static void AddFinding(List<Finding> findings, string severity, string title, string detail)
+    {
+        if (findings.Any(finding =>
+            finding.Severity.Equals(severity, StringComparison.OrdinalIgnoreCase)
+            && finding.Title.Equals(title, StringComparison.OrdinalIgnoreCase)
+            && finding.Detail.Equals(detail, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        findings.Add(new Finding(severity, title, detail));
     }
 
     private static bool IsPackageInstall(string? commandLine)

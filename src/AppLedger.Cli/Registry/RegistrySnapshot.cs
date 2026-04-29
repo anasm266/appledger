@@ -222,6 +222,9 @@ internal static class RegistrySnapshot
                 AddValue(values, RegistryHive.LocalMachine, taskPath, $"Arguments{suffix}", ChildValue(exec, "Arguments"));
                 AddValue(values, RegistryHive.LocalMachine, taskPath, $"WorkingDirectory{suffix}", ChildValue(exec, "WorkingDirectory"));
             }
+
+            AddValue(values, RegistryHive.LocalMachine, taskPath, "TriggerSummary", SummarizeTaskTriggers(document));
+            AddValue(values, RegistryHive.LocalMachine, taskPath, "ConditionSummary", SummarizeTaskConditions(document));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or System.Xml.XmlException)
         {
@@ -232,6 +235,43 @@ internal static class RegistrySnapshot
 
     private static string? ChildValue(System.Xml.Linq.XElement parent, string localName) =>
         parent.Elements().FirstOrDefault(element => element.Name.LocalName.Equals(localName, StringComparison.OrdinalIgnoreCase))?.Value;
+
+    private static string? SummarizeTaskTriggers(System.Xml.Linq.XDocument document)
+    {
+        var triggers = document
+            .Descendants()
+            .Where(element => element.Parent?.Name.LocalName.Equals("Triggers", StringComparison.OrdinalIgnoreCase) == true)
+            .Select(element => element.Name.LocalName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToList();
+
+        return triggers.Count == 0 ? null : string.Join(", ", triggers);
+    }
+
+    private static string? SummarizeTaskConditions(System.Xml.Linq.XDocument document)
+    {
+        var conditions = document
+            .Descendants()
+            .Where(element => element.Parent?.Name.LocalName.Equals("Settings", StringComparison.OrdinalIgnoreCase) == true
+                || element.Parent?.Name.LocalName.Equals("Conditions", StringComparison.OrdinalIgnoreCase) == true)
+            .Where(element => element.Name.LocalName is
+                "StartWhenAvailable"
+                or "RunOnlyIfNetworkAvailable"
+                or "DisallowStartIfOnBatteries"
+                or "StopIfGoingOnBatteries"
+                or "RunOnlyIfIdle"
+                or "WakeToRun"
+                or "Hidden")
+            .Select(element => $"{element.Name.LocalName}={element.Value}")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToList();
+
+        return conditions.Count == 0 ? null : string.Join(", ", conditions);
+    }
 
     private static string SafeRelativePath(string root, string file)
     {

@@ -137,9 +137,19 @@ internal static class PersistenceAnalyzer
         var command = valueName.Equals("ImagePath", StringComparison.OrdinalIgnoreCase)
             ? entry.After ?? entry.Before
             : null;
-        var detail = string.IsNullOrWhiteSpace(command)
-            ? $"{entry.Kind}: {serviceName} {valueName}".TrimEnd()
-            : $"{entry.Kind}: {serviceName} image path = {command}";
+        var startMode = valueName.Equals("Start", StringComparison.OrdinalIgnoreCase)
+            ? DescribeServiceStartMode(entry.After ?? entry.Before)
+            : null;
+        var serviceType = valueName.Equals("Type", StringComparison.OrdinalIgnoreCase)
+            ? DescribeServiceType(entry.After ?? entry.Before)
+            : null;
+        var detail = command is not null
+            ? $"{entry.Kind}: {serviceName} image path = {command}"
+            : startMode is not null
+                ? $"{entry.Kind}: {serviceName} start mode = {startMode}"
+                : serviceType is not null
+                    ? $"{entry.Kind}: {serviceName} type = {serviceType}"
+                    : $"{entry.Kind}: {serviceName} {valueName}".TrimEnd();
 
         item = new PersistenceItem(
             "service",
@@ -176,17 +186,32 @@ internal static class PersistenceAnalyzer
 
         var valueName = parts.Length > 1 ? parts[^1] : "";
         var taskName = string.Join("\\", valueName.Length == 0 ? parts : parts.Take(parts.Length - 1));
-        var action = valueName.Equals("Command", StringComparison.OrdinalIgnoreCase)
+        var action = valueName.StartsWith("Command", StringComparison.OrdinalIgnoreCase)
             ? entry.After ?? entry.Before
             : null;
-        var arguments = valueName.Equals("Arguments", StringComparison.OrdinalIgnoreCase)
+        var arguments = valueName.StartsWith("Arguments", StringComparison.OrdinalIgnoreCase)
+            ? entry.After ?? entry.Before
+            : null;
+        var workingDirectory = valueName.StartsWith("WorkingDirectory", StringComparison.OrdinalIgnoreCase)
+            ? entry.After ?? entry.Before
+            : null;
+        var triggerSummary = valueName.Equals("TriggerSummary", StringComparison.OrdinalIgnoreCase)
+            ? entry.After ?? entry.Before
+            : null;
+        var conditionSummary = valueName.Equals("ConditionSummary", StringComparison.OrdinalIgnoreCase)
             ? entry.After ?? entry.Before
             : null;
         var detail = action is not null
             ? $"{entry.Kind}: {taskName} command = {action}"
             : arguments is not null
                 ? $"{entry.Kind}: {taskName} arguments = {arguments}"
-                : $"{entry.Kind}: {taskName} {valueName}".TrimEnd();
+                : workingDirectory is not null
+                    ? $"{entry.Kind}: {taskName} working directory = {workingDirectory}"
+                    : triggerSummary is not null
+                        ? $"{entry.Kind}: {taskName} triggers = {triggerSummary}"
+                        : conditionSummary is not null
+                            ? $"{entry.Kind}: {taskName} conditions = {conditionSummary}"
+                            : $"{entry.Kind}: {taskName} {valueName}".TrimEnd();
 
         item = new PersistenceItem(
             "scheduled-task",
@@ -209,6 +234,43 @@ internal static class PersistenceAnalyzer
         }
 
         findings.Add(new Finding(severity, title, string.Join("; ", matches.Select(item => item.Detail))));
+    }
+
+    private static string? DescribeServiceStartMode(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return value.Trim() switch
+        {
+            "0" => "Boot (0)",
+            "1" => "System (1)",
+            "2" => "Automatic (2)",
+            "3" => "Manual (3)",
+            "4" => "Disabled (4)",
+            _ => value
+        };
+    }
+
+    private static string? DescribeServiceType(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return value.Trim() switch
+        {
+            "1" => "Kernel driver (1)",
+            "2" => "File system driver (2)",
+            "16" => "Own process service (16)",
+            "32" => "Shared process service (32)",
+            "272" => "Interactive own process service (272)",
+            "288" => "Interactive shared process service (288)",
+            _ => value
+        };
     }
 
     private static bool IsStartupRegistry(string key) =>

@@ -36,6 +36,8 @@ Working now:
 - broader persistence risk observations for startup registry, Startup folders, services, scheduled tasks, protocol handlers, and file associations
 - dedicated Persistence Summary in HTML with explicit clean-state wording
 - service image-path and scheduled task command/argument details where available
+- structured `Persistence` export in `session.json`
+- readable service start/type labels and concise scheduled task trigger/condition summaries
 - conservative cleanup guidance in HTML and `cleanup.ps1`
 - active process-tree membership guarded against PID reuse before ETW/network sync
 - HTML / JSON / CSV / SQLite outputs
@@ -85,14 +87,16 @@ Built:
 - clean-state wording such as "Added no startup persistence"
 - scheduled task command/action extraction where available
 - service image-path summaries
+- structured persistence export block in `session.json`
+- scheduled task trigger/condition summaries where useful
+- service start-mode/type summaries
 - cache/temp cleanup grouping
 - conservative cleanup script annotations
 
 Next:
 
-- separate persistence export block in `session.json`
-- scheduled task trigger/condition summaries where useful
-- service start-mode change summaries
+- tune Codex/Claude/Cursor/VS Code profile filters from longer real sessions
+- consider a persistence-specific SQLite table if querying by persistence type becomes useful
 
 ## Not Next
 

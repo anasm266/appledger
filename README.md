@@ -31,8 +31,11 @@ Current Phase 1 capabilities:
 - detect common startup, service, scheduled task, protocol handler, and file association registry changes
 - detect writes to Windows Startup folders
 - extract service `ImagePath` and scheduled task XML `Exec` command/argument details when available
+- translate service start/type values into readable labels such as `Automatic (2)`
+- summarize useful scheduled task trigger and condition fields
 - emit higher-signal risk observations for secret-like paths, shell spawns, package installs, network-transfer tools, external endpoints, and user-facing writes outside watched roots
 - show a dedicated Persistence Summary that explicitly says when no startup persistence was added
+- include the structured `Persistence` block in `session.json` / `session.sqlite` metadata
 - show cleanup guidance in the report and generate a grouped, commented `cleanup.ps1`
 - summarize whole-app sessions with a top-level "Big Picture" and activity buckets
 - show a first-screen report summary with risk state, priority observations, capture/profile state, attribution quality, watched-root changes, commands, and network groups
@@ -310,7 +313,7 @@ What is not done yet:
 - network byte counts
 - packet contents
 - broad whole-registry diffs
-- exhaustive scheduled-task trigger/condition parsing beyond command/action details
+- exhaustive scheduled-task XML parsing beyond concise action, trigger, and condition summaries
 - GUI desktop app
 - guard/block mode
 - kernel driver or minifilter collector
@@ -349,6 +352,8 @@ Recent Phase 1 progress:
 - stronger risk findings for AI coding sessions, including `.env`, SSH/credential files, PowerShell bypass, package installs, network tools, external endpoints, and outside-root writes
 - broader persistence findings for startup registry, Startup folders, services, scheduled tasks, protocol handlers, and file associations
 - dedicated Persistence Summary with clean-state wording and service/task command details when available
+- structured persistence export in `session.json`
+- scheduled task trigger/condition summaries and readable service start/type labels
 - cleanup guidance section with likely-safe temp/cache candidates and review-only app-data candidates
 - app-specific AI profiles for Codex, Claude, Cursor, and VS Code
 - automatic report opening with `--no-open` for scripted runs

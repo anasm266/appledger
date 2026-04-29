@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Diagnostics;
+using System.Text.Json;
 using AppLedger;
 using Xunit;
 
@@ -339,13 +340,44 @@ public sealed class NormalizationTests
             [],
             [
                 new RegistryEvent(RegistryEventKind.Modified, @"LocalMachine\SYSTEM\CurrentControlSet\Services\AgentSvc\ImagePath", "old.exe", @"C:\Tools\agent.exe --service"),
+                new RegistryEvent(RegistryEventKind.Modified, @"LocalMachine\SYSTEM\CurrentControlSet\Services\AgentSvc\Start", "3", "2"),
+                new RegistryEvent(RegistryEventKind.Modified, @"LocalMachine\SYSTEM\CurrentControlSet\Services\AgentSvc\Type", "16", "32"),
                 new RegistryEvent(RegistryEventKind.Created, @"LocalMachine\ScheduledTasks\Agent\Command", null, @"C:\Tools\agent.exe"),
-                new RegistryEvent(RegistryEventKind.Created, @"LocalMachine\ScheduledTasks\Agent\Arguments", null, "--daily")
+                new RegistryEvent(RegistryEventKind.Created, @"LocalMachine\ScheduledTasks\Agent\Arguments", null, "--daily"),
+                new RegistryEvent(RegistryEventKind.Created, @"LocalMachine\ScheduledTasks\Agent\TriggerSummary", null, "CalendarTrigger, LogonTrigger"),
+                new RegistryEvent(RegistryEventKind.Created, @"LocalMachine\ScheduledTasks\Agent\ConditionSummary", null, "StartWhenAvailable=true")
             ]);
 
         Assert.Contains(summary.Items, item => item.Kind == "service" && item.Name == "AgentSvc" && item.Detail.Contains(@"C:\Tools\agent.exe --service", StringComparison.Ordinal));
+        Assert.Contains(summary.Items, item => item.Kind == "service" && item.Name == "AgentSvc" && item.Detail.Contains("Automatic (2)", StringComparison.Ordinal));
+        Assert.Contains(summary.Items, item => item.Kind == "service" && item.Name == "AgentSvc" && item.Detail.Contains("Shared process service (32)", StringComparison.Ordinal));
         Assert.Contains(summary.Items, item => item.Kind == "scheduled-task" && item.Name == "Agent" && item.Detail.Contains(@"C:\Tools\agent.exe", StringComparison.Ordinal));
         Assert.Contains(summary.Items, item => item.Kind == "scheduled-task" && item.Name == "Agent" && item.Detail.Contains("--daily", StringComparison.Ordinal));
+        Assert.Contains(summary.Items, item => item.Kind == "scheduled-task" && item.Name == "Agent" && item.Detail.Contains("CalendarTrigger", StringComparison.Ordinal));
+        Assert.Contains(summary.Items, item => item.Kind == "scheduled-task" && item.Name == "Agent" && item.Detail.Contains("StartWhenAvailable=true", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void SessionReport_ExportsPersistenceSummaryInJson()
+    {
+        var session = EmptySession() with
+        {
+            RegistryEvents =
+            [
+                new RegistryEvent(RegistryEventKind.Modified, @"LocalMachine\SYSTEM\CurrentControlSet\Services\AgentSvc\Start", "3", "2"),
+                new RegistryEvent(RegistryEventKind.Created, @"LocalMachine\ScheduledTasks\Agent\Command", null, @"C:\Tools\agent.exe")
+            ]
+        };
+
+        var refreshed = SessionReport.RefreshDerivedData(session);
+        var json = JsonSerializer.Serialize(refreshed, ProgramJson.Options);
+
+        Assert.NotNull(refreshed.Persistence);
+        Assert.Equal(1, refreshed.Persistence.ServiceCount);
+        Assert.Equal(1, refreshed.Persistence.ScheduledTaskCount);
+        Assert.Contains("\"Persistence\"", json, StringComparison.Ordinal);
+        Assert.Contains("Automatic (2)", json, StringComparison.Ordinal);
+        Assert.Contains("agent.exe", json, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -18,7 +18,8 @@ internal sealed record SessionReport(
     IReadOnlyList<string> SnapshotErrors,
     SessionActivityOverview? ActivityOverview = null,
     SessionNetworkOverview? NetworkOverview = null,
-    SessionCaptureSettings? CaptureSettings = null)
+    SessionCaptureSettings? CaptureSettings = null,
+    PersistenceSummary? Persistence = null)
 {
     public static SessionReport Build(
         string app,
@@ -43,6 +44,7 @@ internal sealed record SessionReport(
         var aiActivity = AiCodingAnalyzer.Build(watchRoots, normalizedFileEvents, processes);
         var activityOverview = SessionActivityAnalyzer.Build(watchRoots, watchAll, normalizedFileEvents, normalizedNetworkEvents, aiActivity, findings);
         var networkOverview = NetworkSummaryAnalyzer.Build(normalizedNetworkEvents, processes);
+        var persistence = PersistenceAnalyzer.Build(normalizedFileEvents, registryEvents);
         var summary = new SessionSummary(
             normalizedFileEvents.Count(e => e.Kind == FileEventKind.Read),
             normalizedFileEvents.Count(e => e.Kind == FileEventKind.Created),
@@ -74,7 +76,8 @@ internal sealed record SessionReport(
             before.Errors.Concat(after.Errors).Distinct().Take(200).ToList(),
             activityOverview,
             networkOverview,
-            captureSettings ?? SessionCaptureSettings.Default(watchAll));
+            captureSettings ?? SessionCaptureSettings.Default(watchAll),
+            persistence);
     }
 
     public static SessionReport RefreshDerivedData(SessionReport session)
@@ -87,6 +90,7 @@ internal sealed record SessionReport(
         var aiActivity = AiCodingAnalyzer.Build(session.WatchRoots, normalizedFileEvents, session.Processes);
         var activityOverview = SessionActivityAnalyzer.Build(session.WatchRoots, session.WatchAll, normalizedFileEvents, normalizedNetworkEvents, aiActivity, findings);
         var networkOverview = NetworkSummaryAnalyzer.Build(normalizedNetworkEvents, session.Processes);
+        var persistence = PersistenceAnalyzer.Build(normalizedFileEvents, session.RegistryEvents);
         var summary = new SessionSummary(
             normalizedFileEvents.Count(e => e.Kind == FileEventKind.Read),
             normalizedFileEvents.Count(e => e.Kind == FileEventKind.Created),
@@ -110,7 +114,8 @@ internal sealed record SessionReport(
             AiActivity = aiActivity,
             ActivityOverview = activityOverview,
             NetworkOverview = networkOverview,
-            CaptureSettings = session.CaptureSettings ?? SessionCaptureSettings.Default(session.WatchAll)
+            CaptureSettings = session.CaptureSettings ?? SessionCaptureSettings.Default(session.WatchAll),
+            Persistence = persistence
         };
     }
 

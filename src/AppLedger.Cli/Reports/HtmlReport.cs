@@ -26,7 +26,7 @@ internal static class HtmlReport
         var activityBuckets = string.Join(Environment.NewLine, activityOverview.Buckets.Select(RenderActivityBucket));
         var networkDestinations = string.Join(Environment.NewLine, networkOverview.Destinations.Select(RenderNetworkDestinationRow));
         var networkProcesses = string.Join(Environment.NewLine, networkOverview.Processes.Select(RenderNetworkProcessRow));
-        var persistence = PersistenceAnalyzer.Build(session.FileEvents, session.RegistryEvents);
+        var persistence = session.Persistence ?? PersistenceAnalyzer.Build(session.FileEvents, session.RegistryEvents);
         var persistenceRows = string.Join(Environment.NewLine, persistence.Items.Select(RenderPersistenceRow));
         var cleanupPlan = CleanupPlanner.Build(session);
         var cleanupSafeRows = string.Join(Environment.NewLine, cleanupPlan.Safe.Select(RenderCleanupCandidateRow));

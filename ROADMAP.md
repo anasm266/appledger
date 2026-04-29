@@ -42,6 +42,7 @@ Implemented:
 - broader persistence-oriented registry monitoring for StartupApproved, services, scheduled task cache, protocol handlers, and file associations
 - Startup folder write findings
 - service image-path and scheduled task XML command/argument details
+- readable service start/type labels and concise scheduled task trigger/condition summaries
 - higher-signal risk observations for sensitive paths, shell spawns, package installs, network tools, external endpoints, and outside-root writes
 - HTML, JSON, CSV, SQLite, AI activity, and cleanup outputs
 - conservative cleanup planner with likely-safe cache/temp candidates and review-only app-data candidates
@@ -82,6 +83,8 @@ Recent Phase 1 fixes:
 - persistence analyzer expanded beyond Run/RunOnce and covered by tests
 - dedicated Persistence Summary added with clean-state wording
 - scheduled task command/action and service image-path details surfaced when available
+- structured persistence export added to session JSON
+- service start/type labels and scheduled task trigger/condition summaries added
 - cleanup guidance added to reports and cleanup.ps1
 - running app picker added for friendlier `record codex --watch .` style workflows
 - app-specific AI profiles added on top of the generic `ai-code` defaults
@@ -106,7 +109,7 @@ Still rough or incomplete:
 - hostname correlation is opportunistic, not guaranteed for every endpoint
 - command parsing is pragmatic, not exhaustive
 - registry coverage focuses on high-value persistence locations, not broad whole-registry diffs
-- scheduled task parsing focuses on `Exec` command details, not every trigger/condition setting
+- scheduled task parsing focuses on concise action, trigger, and condition summaries, not full XML reproduction
 - app-specific filter presets exist, but they still need tuning against longer real Codex, Claude, Cursor, and VS Code sessions
 - large sessions still need test coverage and tuning
 - no desktop UI yet
@@ -151,18 +154,19 @@ Built now:
 - service registry checks
 - scheduled task cache checks
 - scheduled task XML `Exec` command/argument extraction
-- service image-path summaries
+- scheduled task trigger/condition summaries
+- service image-path, start-mode, and type summaries
 - protocol handler checks
 - file association checks
 - dedicated report section that says "Added no startup persistence" when clean
+- structured persistence export block in `session.json`
 - safer cache/temp cleanup classification
 - clearer `cleanup.ps1` review comments
 
 Next build:
 
-- separate persistence export block in `session.json`
-- scheduled task trigger/condition summaries where useful
-- richer service start-mode change wording
+- full scheduled task XML details only if the concise summary proves insufficient
+- persistence-specific SQLite table if querying by persistence type becomes useful
 
 Success looks like the first screen answering:
 
@@ -183,8 +187,8 @@ Goal: strong Windows observability beyond the MVP.
 Build:
 
 - deeper registry snapshot/diff for high-value locations
-- scheduled task action extraction
-- service image-path/start-mode summaries
+- deeper scheduled task action extraction
+- richer service configuration summaries
 - protocol handler and file association summaries
 - USN journal fallback for missed file changes
 - deeper process-instance history for long sessions and exited/reused processes

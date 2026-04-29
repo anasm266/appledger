@@ -172,13 +172,15 @@ appledger --help
 appledger apps --running codex
 ```
 
+Keep the extracted folder together. The zip includes `appledger.exe` plus native ETW support files under `amd64\`; copying only `appledger.exe` can make elevated recording fail with a missing module error.
+
 For the current shell only:
 
 ```powershell
 .\appledger.exe record codex --watch .
 ```
 
-Release packages are built as self-contained Windows x64 single-file binaries. Users do not need the .NET SDK to run the release build.
+Release packages are built as self-contained Windows x64 packages with a single AppLedger executable and native ETW support files. Users do not need the .NET SDK to run the release build.
 
 To build the same package locally:
 
@@ -408,7 +410,7 @@ Recent Phase 1 progress:
 - process identity fields added to JSON, CSV, SQLite, and HTML report views for file/network attribution
 - attribution confidence summary added to the HTML report
 - process-tree membership now prunes stale reused PIDs before syncing ETW/network filters
-- release packaging via `scripts\publish-release.ps1` for self-contained single-file `win-x64` zips
+- release packaging via `scripts\publish-release.ps1` for self-contained `win-x64` zips with native ETW support files
 - GitHub Actions release workflow that builds, tests, uploads workflow artifacts, and attaches zip/SHA256 files to tag releases
 
 ## Roadmap

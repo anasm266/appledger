@@ -9,6 +9,14 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $project = Join-Path $repoRoot "src\AppLedger.Cli\AppLedger.Cli.csproj"
+$projectXml = [xml](Get-Content -LiteralPath $project)
+$traceEventVersion = ($projectXml.Project.ItemGroup.PackageReference |
+    Where-Object { $_.Include -eq "Microsoft.Diagnostics.Tracing.TraceEvent" } |
+    Select-Object -First 1).Version
+if ([string]::IsNullOrWhiteSpace($traceEventVersion)) {
+    throw "Could not find Microsoft.Diagnostics.Tracing.TraceEvent package version in $project"
+}
+
 $releaseVersion = $Version.Trim()
 if ([string]::IsNullOrWhiteSpace($releaseVersion) -or $releaseVersion -eq "dev") {
     $releaseVersion = "0.0.0-dev"
@@ -53,6 +61,29 @@ if (-not (Test-Path $exe)) {
 Get-ChildItem -LiteralPath $publishDir -File |
     Where-Object { $_.Name -ne "appledger.exe" } |
     Remove-Item -Force
+
+Get-ChildItem -LiteralPath $publishDir -Directory |
+    Remove-Item -Recurse -Force
+
+$nativeArch = switch ($Runtime) {
+    "win-x64" { "amd64" }
+    "win-x86" { "x86" }
+    "win-arm64" { "arm64" }
+    default { throw "Unsupported runtime for TraceEvent native packaging: $Runtime" }
+}
+
+$nugetRoot = if ($env:NUGET_PACKAGES) {
+    $env:NUGET_PACKAGES
+} else {
+    Join-Path $HOME ".nuget\packages"
+}
+
+$nativeSource = Join-Path $nugetRoot "microsoft.diagnostics.tracing.traceevent\$traceEventVersion\build\native\$nativeArch"
+if (-not (Test-Path $nativeSource)) {
+    throw "TraceEvent native support files were not found: $nativeSource"
+}
+
+Copy-Item -LiteralPath $nativeSource -Destination (Join-Path $publishDir $nativeArch) -Recurse -Force
 
 $readme = Join-Path $repoRoot "README.md"
 if (Test-Path $readme) {

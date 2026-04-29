@@ -38,7 +38,7 @@ Working now:
 - service image-path and scheduled task command/argument details where available
 - structured `Persistence` export in `session.json`
 - readable service start/type labels and concise scheduled task trigger/condition summaries
-- self-contained single-file `win-x64` release packaging
+- self-contained `win-x64` release packaging with native ETW support files
 - GitHub Actions workflow for release zips and SHA256 artifacts
 - conservative cleanup guidance in HTML and `cleanup.ps1`
 - active process-tree membership guarded against PID reuse before ETW/network sync

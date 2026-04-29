@@ -46,7 +46,7 @@ Implemented:
 - higher-signal risk observations for sensitive paths, shell spawns, package installs, network tools, external endpoints, and outside-root writes
 - HTML, JSON, CSV, SQLite, AI activity, and cleanup outputs
 - conservative cleanup planner with likely-safe cache/temp candidates and review-only app-data candidates
-- self-contained single-file `win-x64` release packaging script
+- self-contained `win-x64` release packaging script with native ETW support files
 - GitHub Actions release workflow for tag/manual builds and release assets
 - first-screen whole-app summary via `Big Picture` and `Activity Buckets`
 - polished first-screen HTML summary with risk state, priority observations, and compact session cards
@@ -87,7 +87,7 @@ Recent Phase 1 fixes:
 - scheduled task command/action and service image-path details surfaced when available
 - structured persistence export added to session JSON
 - service start/type labels and scheduled task trigger/condition summaries added
-- release packaging added with `appledger-win-x64.zip` and SHA256 output
+- release packaging added with `appledger-win-x64.zip`, native ETW support files, and SHA256 output
 - GitHub release workflow added for tag-triggered release asset upload
 - cleanup guidance added to reports and cleanup.ps1
 - running app picker added for friendlier `record codex --watch .` style workflows

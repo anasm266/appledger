@@ -33,13 +33,14 @@ Current Phase 1 capabilities:
 - extract service `ImagePath` and scheduled task XML `Exec` command/argument details when available
 - translate service start/type values into readable labels such as `Automatic (2)`
 - summarize useful scheduled task trigger and condition fields
-- emit higher-signal risk observations for secret-like paths, shell spawns, package installs, network-transfer tools, external endpoints, and user-facing writes outside watched roots
+- emit higher-signal risk observations for secret-like paths, PowerShell bypass, package installs, network-transfer tools, external endpoints, and user-facing writes outside watched roots
 - show a dedicated Persistence Summary that explicitly says when no startup persistence was added
 - include the structured `Persistence` block in `session.json` / `session.sqlite` metadata
 - show cleanup guidance in the report and generate a grouped, commented `cleanup.ps1`
 - summarize whole-app sessions with a top-level "Big Picture" and activity buckets
-- show a first-screen report summary with risk state, priority observations, capture/profile state, attribution quality, watched-root changes, commands, and network groups
-- label watched-root changes separately from true source/project intent
+- show a first-screen report summary with risk state, priority observations, capture/profile state, attribution quality, project/user changes, commands, and network groups
+- detect source-like project/user files in Documents/Desktop/Downloads even when an AI app works outside the watched repo
+- label project/user changes separately from raw watched-root, cache, temp, `.git`, and runtime activity
 - show byte totals as known bytes because live ETW events often lack size deltas
 - show capture settings in reports so disabled categories such as file reads are explicit
 - attach process identity snapshots to file and network events for stronger attribution
@@ -52,7 +53,7 @@ Current Phase 1 capabilities:
 - normalize rename targets in regenerated reports and display renames as `old -> new`
 - group `.git` internals and runtime bookkeeping out of the main report tables
 - control large sessions with `--no-reads`, `--max-events <n>`, and `--no-sqlite`
-- keep noisy defaults out of AI sessions, including `node_modules`, `.git\objects`, `.git\logs`, AppLedger output folders, common cache folders, and app-specific cache/log folders
+- keep noisy defaults out of AI sessions, including `node_modules`, `.git\objects`, `.git\logs`, AppLedger output folders, SQLite temp churn, Codex state, common cache folders, and app-specific cache/log folders
 - cover normalization and summary logic with unit tests
 
 Generated artifacts:
@@ -345,14 +346,14 @@ Path filters run before live events are counted against `--max-events` and befor
 
 What the report can now surface for AI sessions:
 
-- watched-root changes
-- shell and git commands
+- project/user file changes, including source-like files under Documents/Desktop/Downloads outside the watched repo
+- developer commands such as tests, scripts, package installs, and non-boilerplate git commands
 - sensitive file access such as `.env`
 - rename and delete activity
 - outbound endpoints with hostname enrichment when available
 - grouped network destinations and network-active processes
 - grouped process activity
-- whole-app temp/cache churn vs project changes
+- whole-app temp/cache churn, app state, `.git` internals, and runtime noise separated from project changes
 - first-screen session summary via `Big Picture` and `Activity Buckets`
 
 ## Known Limits
@@ -406,7 +407,8 @@ Recent Phase 1 progress:
 - cleanup guidance section with likely-safe temp/cache candidates and review-only app-data candidates
 - app-specific AI profiles for Codex, Claude, Cursor, and VS Code
 - automatic report opening with `--no-open` for scripted runs
-- report wording now distinguishes watched-root changes from source/project files and labels byte totals as known bytes
+- report wording now distinguishes project/user file changes from raw watched-root, app-state, cache/temp, and runtime activity
+- Codex profile tuning from a real session now filters `.codex` state, SQLite `etilqs_*` temp files, encoded shell bootstrap commands, and internal git introspection from the main AI activity story
 - process identity fields added to JSON, CSV, SQLite, and HTML report views for file/network attribution
 - attribution confidence summary added to the HTML report
 - process-tree membership now prunes stale reused PIDs before syncing ETW/network filters

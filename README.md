@@ -148,12 +148,57 @@ Profiles bundle those flags for normal use. The `record` command infers these pr
 When a profile disables a category, the report labels it as disabled. For example, `ai-code` reports file reads as `Off` / `file reads disabled` instead of implying AppLedger observed zero reads.
 Active include/exclude filters are also shown in the report capture settings.
 
+## Install
+
+For normal use, install the release zip instead of running through `dotnet`.
+
+From a GitHub release:
+
+```powershell
+$installDir = "$env:LOCALAPPDATA\AppLedger"
+New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+Expand-Archive .\appledger-win-x64.zip -DestinationPath $installDir -Force
+
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if ($userPath -notlike "*$installDir*") {
+  [Environment]::SetEnvironmentVariable("Path", "$userPath;$installDir", "User")
+}
+```
+
+Open a new elevated PowerShell, then verify:
+
+```powershell
+appledger --help
+appledger apps --running codex
+```
+
+For the current shell only:
+
+```powershell
+.\appledger.exe record codex --watch .
+```
+
+Release packages are built as self-contained Windows x64 single-file binaries. Users do not need the .NET SDK to run the release build.
+
+To build the same package locally:
+
+```powershell
+.\scripts\publish-release.ps1 -Runtime win-x64 -Version 0.1.0
+```
+
+Generated release files:
+
+```text
+artifacts\release\appledger-win-x64.zip
+artifacts\release\appledger-win-x64.zip.sha256
+```
+
 ## Quick Start
 
 Prerequisites:
 
 - Windows
-- .NET 8 SDK
+- .NET 8 SDK if building from source
 - elevated PowerShell if you want live ETW file/process capture
 
 Find an app by alias or search:
@@ -164,11 +209,13 @@ dotnet run --project src\AppLedger.Cli -- apps cursor
 dotnet run --project src\AppLedger.Cli -- apps --running codex
 ```
 
-For day-to-day testing, prefer the published binary:
+For day-to-day source testing, prefer the published binary:
 
 ```powershell
 dotnet publish src\AppLedger.Cli\AppLedger.Cli.csproj -c Release -o artifacts\publish-test
 ```
+
+For release packaging, use `scripts\publish-release.ps1`; it produces a single-file `appledger.exe` zip.
 
 Record an app you launch:
 
@@ -361,6 +408,8 @@ Recent Phase 1 progress:
 - process identity fields added to JSON, CSV, SQLite, and HTML report views for file/network attribution
 - attribution confidence summary added to the HTML report
 - process-tree membership now prunes stale reused PIDs before syncing ETW/network filters
+- release packaging via `scripts\publish-release.ps1` for self-contained single-file `win-x64` zips
+- GitHub Actions release workflow that builds, tests, uploads workflow artifacts, and attaches zip/SHA256 files to tag releases
 
 ## Roadmap
 

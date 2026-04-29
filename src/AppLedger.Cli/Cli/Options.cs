@@ -204,7 +204,8 @@ internal sealed record RecordingProfile(
         "DawnCache",
         "ShaderCache",
         "GrShaderCache",
-        "Crashpad"
+        "Crashpad",
+        "etilqs_*"
     ];
 
     public static readonly RecordingProfile None = new(
@@ -233,7 +234,9 @@ internal sealed record RecordingProfile(
         ExcludeFilters = CommonAiCodeExcludes.Concat([
             "OpenAI\\Codex\\logs",
             "OpenAI\\Codex\\Cache",
-            "node_repl\\node_modules"
+            "Codex\\sentry",
+            "node_repl\\node_modules",
+            ".codex"
         ]).ToArray()
     };
 

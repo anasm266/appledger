@@ -51,12 +51,7 @@ internal static class Analyzer
 
         foreach (var process in processes.Where(IsEncodedPowerShell).Take(10))
         {
-            AddFinding(findings, "medium", "Encoded PowerShell command", SanitizeCommandLine(process.CommandLine) ?? process.Name);
-        }
-
-        foreach (var process in processes.Where(IsShellProcess).Take(10))
-        {
-            AddFinding(findings, "medium", "Shell process spawned", SanitizeCommandLine(process.CommandLine) ?? process.Name);
+            AddFinding(findings, "info", "Encoded PowerShell command", SanitizeCommandLine(process.CommandLine) ?? process.Name);
         }
 
         foreach (var process in processes.Where(p => IsPackageInstall(p.CommandLine)).Take(10))
@@ -191,18 +186,6 @@ internal static class Analyzer
         IsPowerShellName(process.Name)
         && process.CommandLine?.Contains("-EncodedCommand", StringComparison.OrdinalIgnoreCase) == true;
 
-    private static bool IsShellProcess(ProcessRecord process)
-    {
-        if (!IsShellName(process.Name))
-        {
-            return false;
-        }
-
-        var command = process.CommandLine ?? "";
-        return !command.Contains("Win32_Process | Select-Object", StringComparison.OrdinalIgnoreCase)
-            && !command.Contains("Long-lived PowerShell AST parser", StringComparison.OrdinalIgnoreCase);
-    }
-
     private static bool IsNetworkToolCommand(ProcessRecord process)
     {
         var command = process.CommandLine ?? "";
@@ -235,11 +218,24 @@ internal static class Analyzer
     {
         var normalized = path.Replace('/', '\\');
         return PathClassifier.IsSystemRuntimeNoise(path)
+            || IsUserProfileRoot(normalized)
             || normalized.Contains("\\.git\\", StringComparison.OrdinalIgnoreCase)
+            || IsCodexStatePath(normalized)
             || normalized.Contains("\\node_modules\\", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("\\AppData\\", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("\\Temp\\", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static bool IsUserProfileRoot(string normalizedPath)
+    {
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile).TrimEnd('\\');
+        return !string.IsNullOrWhiteSpace(userProfile)
+            && normalizedPath.TrimEnd('\\').Equals(userProfile, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCodexStatePath(string normalizedPath) =>
+        normalizedPath.Contains("\\.codex\\", StringComparison.OrdinalIgnoreCase)
+        || normalizedPath.EndsWith("\\.codex", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsExternalAddress(string address)
     {
@@ -260,9 +256,6 @@ internal static class Analyzer
                 || (bytes[0] == 192 && bytes[1] == 168)
                 || (bytes[0] == 169 && bytes[1] == 254));
     }
-
-    private static bool IsShellName(string name) =>
-        IsPowerShellName(name) || name.Equals("cmd.exe", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsPowerShellName(string name) =>
         name.Equals("powershell.exe", StringComparison.OrdinalIgnoreCase)
@@ -439,21 +432,127 @@ internal static class AiCodingAnalyzer
 
     private static bool IsProjectFile(string path, IReadOnlyList<string> watchRoots)
     {
-        if (!PathClassifier.IsUnderAnyWatchRoot(path, watchRoots))
+        var normalized = path.Replace('/', '\\');
+        if (IsCodexStatePath(normalized))
         {
             return false;
         }
 
-        var normalized = path.Replace('/', '\\');
         if (ProjectNoiseSegments.Any(segment => normalized.Contains(segment, StringComparison.OrdinalIgnoreCase)))
         {
             return false;
         }
 
         var fileName = Path.GetFileName(normalized);
-        return !fileName.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)
-            && !fileName.EndsWith(".log", StringComparison.OrdinalIgnoreCase)
-            && !fileName.EndsWith(".cache", StringComparison.OrdinalIgnoreCase);
+        if (IsIgnoredProjectFileName(fileName))
+        {
+            return false;
+        }
+
+        if (PathClassifier.IsUnderAnyWatchRoot(path, watchRoots))
+        {
+            return true;
+        }
+
+        if (!IsUserFacingCodingLocation(path))
+        {
+            return false;
+        }
+
+        return LooksLikeProjectFile(fileName);
+    }
+
+    private static bool IsIgnoredProjectFileName(string fileName) =>
+        string.IsNullOrWhiteSpace(fileName)
+        || fileName.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)
+        || fileName.EndsWith(".log", StringComparison.OrdinalIgnoreCase)
+        || fileName.EndsWith(".cache", StringComparison.OrdinalIgnoreCase)
+        || fileName.EndsWith(".sqlite", StringComparison.OrdinalIgnoreCase)
+        || fileName.EndsWith(".sqlite-wal", StringComparison.OrdinalIgnoreCase)
+        || fileName.EndsWith(".sqlite-shm", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsCodexStatePath(string normalizedPath) =>
+        normalizedPath.Contains("\\.codex\\", StringComparison.OrdinalIgnoreCase)
+        || normalizedPath.EndsWith("\\.codex", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsUserFacingCodingLocation(string path)
+    {
+        if (PathClassifier.IsSystemRuntimeNoise(path))
+        {
+            return false;
+        }
+
+        var category = PathClassifier.Classify(path);
+        return category is "documents" or "desktop" or "downloads" or "project-or-user" or "sensitive";
+    }
+
+    private static bool LooksLikeProjectFile(string fileName)
+    {
+        string[] knownProjectFiles =
+        [
+            "package.json",
+            "package-lock.json",
+            "pnpm-lock.yaml",
+            "yarn.lock",
+            "tsconfig.json",
+            "jsconfig.json",
+            "vite.config.js",
+            "vite.config.ts",
+            ".env",
+            ".env.example",
+            ".env.local",
+            "Dockerfile",
+            "Makefile"
+        ];
+
+        if (knownProjectFiles.Contains(fileName, StringComparer.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        string[] projectExtensions =
+        [
+            ".js",
+            ".jsx",
+            ".ts",
+            ".tsx",
+            ".mjs",
+            ".cjs",
+            ".cs",
+            ".fs",
+            ".vb",
+            ".py",
+            ".go",
+            ".rs",
+            ".java",
+            ".kt",
+            ".c",
+            ".cpp",
+            ".h",
+            ".hpp",
+            ".php",
+            ".rb",
+            ".swift",
+            ".json",
+            ".md",
+            ".yml",
+            ".yaml",
+            ".toml",
+            ".xml",
+            ".ps1",
+            ".sh",
+            ".bat",
+            ".cmd",
+            ".sql",
+            ".css",
+            ".scss",
+            ".html",
+            ".vue",
+            ".svelte"
+        ];
+
+        var extension = Path.GetExtension(fileName);
+        return projectExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
     }
 
     private static IEnumerable<CommandActivity> ClassifyCommands(ProcessRecord process)
@@ -553,8 +652,21 @@ internal static class AiCodingAnalyzer
         return line.Contains("git credential-manager", StringComparison.OrdinalIgnoreCase)
             || line.Contains("git-remote-https", StringComparison.OrdinalIgnoreCase)
             || line.Contains("git remote-https", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("-EncodedCommand", StringComparison.OrdinalIgnoreCase)
+            || IsGitIntrospectionCommand(line)
             || line.Contains("Win32_Process | Select-Object", StringComparison.OrdinalIgnoreCase)
             || line.Contains("Long-lived PowerShell AST parser", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsGitIntrospectionCommand(string command)
+    {
+        var normalized = CommandFingerprint(command);
+        return normalized.Contains("git rev-parse --abbrev-ref", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("git rev-list --count", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("git rev-parse --verify --quiet", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("git for-each-ref --format=%(upstream:short)", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("git merge-base", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("git symbolic-ref", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsTimelineProcess(ProcessRecord process)
@@ -569,7 +681,9 @@ internal static class AiCodingAnalyzer
         if (command.Contains("credential-manager", StringComparison.OrdinalIgnoreCase)
             || command.Contains("git-remote-https", StringComparison.OrdinalIgnoreCase)
             || command.Contains("git remote-https", StringComparison.OrdinalIgnoreCase)
-            || command.Contains("Win32_Process | Select-Object", StringComparison.OrdinalIgnoreCase))
+            || command.Contains("Win32_Process | Select-Object", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("-EncodedCommand", StringComparison.OrdinalIgnoreCase)
+            || IsGitIntrospectionCommand(command))
         {
             return false;
         }
@@ -682,7 +796,7 @@ internal static class SessionActivityAnalyzer
 
         var workspaceBucket = BuildFileBucket(
             "workspace",
-            "Watched Root / User Files",
+            "Project / User Files",
             watchRoots.Count > 0
                 ? "Writes under watched roots and user-facing folders; not all are source/project files."
                 : "Writes under documents, desktop, and downloads.",
@@ -799,23 +913,23 @@ internal static class SessionActivityAnalyzer
     {
         var highlights = new List<string>();
 
+        if (ai.ProjectChanges.TotalChanged > 0)
+        {
+            highlights.Add($"Changed {ai.ProjectChanges.TotalChanged:N0} project/user path(s).");
+        }
+
         if (watchAll)
         {
             var topBucket = buckets
-                .Where(bucket => bucket.Key is not "network" and not "sensitive-paths")
+                .Where(bucket => bucket.Key is not "network" and not "sensitive-paths" and not "temp-churn" and not "system-runtime")
                 .OrderByDescending(bucket => bucket.EventCount)
                 .ThenByDescending(bucket => bucket.UniquePathCount)
                 .FirstOrDefault();
 
-            if (topBucket is not null)
+            if (topBucket is not null && ai.ProjectChanges.TotalChanged == 0)
             {
                 highlights.Add($"Most activity was {topBucket.Label.ToLowerInvariant()} ({topBucket.EventCount:N0} events).");
             }
-        }
-
-        if (ai.ProjectChanges.TotalChanged > 0)
-        {
-            highlights.Add($"Changed {ai.ProjectChanges.TotalChanged:N0} watched-root path(s).");
         }
 
         if (ai.Commands.GitCommands > 0)
@@ -850,21 +964,20 @@ internal static class SessionActivityAnalyzer
     private static string BuildHeadline(AiCodingActivity ai, IReadOnlyList<Finding> findings, IReadOnlyList<ActivityBucketSummary> buckets, int networkCount)
     {
         var topBucket = buckets
-            .Where(bucket => bucket.Key is not "network" and not "sensitive-paths")
+            .Where(bucket => bucket.Key is not "network" and not "sensitive-paths" and not "temp-churn" and not "system-runtime")
             .OrderByDescending(bucket => bucket.EventCount)
             .ThenByDescending(bucket => bucket.UniquePathCount)
             .FirstOrDefault();
 
         var parts = new List<string>();
 
-        if (topBucket is not null)
-        {
-            parts.Add($"Mostly {topBucket.Label.ToLowerInvariant()}");
-        }
-
         if (ai.ProjectChanges.TotalChanged > 0)
         {
-            parts.Add($"changed {ai.ProjectChanges.TotalChanged:N0} watched-root path(s)");
+            parts.Add($"changed {ai.ProjectChanges.TotalChanged:N0} project/user path(s)");
+        }
+        else if (topBucket is not null)
+        {
+            parts.Add($"Mostly {topBucket.Label.ToLowerInvariant()}");
         }
 
         if (ai.Commands.GitCommands > 0)

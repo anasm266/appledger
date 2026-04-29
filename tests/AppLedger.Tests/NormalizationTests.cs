@@ -33,6 +33,9 @@ public sealed class NormalizationTests
         Assert.True(options.WatchAll);
         Assert.False(options.CaptureReads);
         Assert.Contains("OpenAI\\Codex\\Cache", options.PathFilter.Excludes);
+        Assert.Contains("Codex\\sentry", options.PathFilter.Excludes);
+        Assert.Contains(".codex", options.PathFilter.Excludes);
+        Assert.Contains("etilqs_*", options.PathFilter.Excludes);
         Assert.Contains("node_repl\\node_modules", options.PathFilter.Excludes);
     }
 
@@ -241,7 +244,7 @@ public sealed class NormalizationTests
 
         var overview = SessionActivityAnalyzer.Build([], true, files, network, ai, findings);
 
-        Assert.Contains("Mostly temp churn", overview.Headline, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Mostly git metadata", overview.Headline, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("ran 30 git commands", overview.Headline, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("touched sensitive paths", overview.Headline, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("contacted 1 network endpoint", overview.Headline, StringComparison.OrdinalIgnoreCase);
@@ -249,6 +252,49 @@ public sealed class NormalizationTests
         Assert.Contains(overview.Buckets, bucket => bucket.Key == "git-metadata");
         Assert.Contains(overview.Buckets, bucket => bucket.Key == "sensitive-paths");
         Assert.Contains(overview.Buckets, bucket => bucket.Key == "network");
+    }
+
+    [Fact]
+    public void AiCodingAnalyzer_DetectsUserFacingProjectFilesOutsideWatchRoot()
+    {
+        var watchRoot = @"C:\Users\Anas\Documents\New project 8";
+        var demoRoot = @"C:\Users\Anas\Documents\Codex\2026-04-29\new-chat\appledger-agent-demo";
+        var files = FileEventMerger.NormalizeForSession([
+            Live(FileEventKind.Created, Path.Combine(demoRoot, "package.json"), observedAt: At(44), processId: 400, processName: "codex.exe"),
+            Live(FileEventKind.Created, Path.Combine(demoRoot, "src", "math.js"), observedAt: At(45), processId: 400, processName: "codex.exe"),
+            Live(FileEventKind.Created, Path.Combine(demoRoot, ".env.example"), observedAt: At(46), processId: 400, processName: "codex.exe"),
+            Live(FileEventKind.Deleted, Path.Combine(demoRoot, "temp-notes.txt"), observedAt: At(47), processId: 400, processName: "codex.exe"),
+            Live(FileEventKind.Modified, @"C:\Users\Anas\AppData\Local\Temp\etilqs_noise", observedAt: At(48), processId: 400, processName: "codex.exe"),
+            Live(FileEventKind.Modified, @"C:\Users\Anas\.codex\models_cache.json", observedAt: At(49), processId: 400, processName: "codex.exe")
+        ]);
+
+        var ai = AiCodingAnalyzer.Build([watchRoot], files, []);
+
+        Assert.Equal(3, ai.ProjectChanges.TotalChanged);
+        Assert.Contains(ai.ChangedProjectFiles, file => file.RelativePath.EndsWith(@"package.json", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(ai.ChangedProjectFiles, file => file.RelativePath.EndsWith(@".env.example", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(ai.ChangedProjectFiles, file => file.Path.Contains("etilqs", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(ai.ChangedProjectFiles, file => file.Path.Contains(@"\.codex\", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void AiCodingAnalyzer_FiltersInternalGitIntrospectionCommands()
+    {
+        var processes = new List<ProcessRecord>
+        {
+            new(500, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git rev-list --count origin/main..HEAD", At(49), At(49), At(50)),
+            new(501, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git rev-parse --verify --quiet origin/main", At(50), At(50), At(51)),
+            new(502, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git status --short", At(51), At(51), At(52)),
+            new(503, 1, "npm.cmd", @"C:\Program Files\nodejs\npm.cmd", "npm test", At(52), At(52), At(53))
+        };
+
+        var ai = AiCodingAnalyzer.Build([], [], processes);
+
+        Assert.Equal(2, ai.Commands.Total);
+        Assert.Equal(1, ai.Commands.GitCommands);
+        Assert.Equal(1, ai.Commands.TestCommands);
+        Assert.DoesNotContain(ai.DeveloperCommands, command => command.CommandLine.Contains("rev-list", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(ai.DeveloperCommands, command => command.CommandLine.Contains("git status", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -298,7 +344,6 @@ public sealed class NormalizationTests
 
         Assert.Contains(findings, finding => finding.Severity == "high" && finding.Title == ".env touched");
         Assert.Contains(findings, finding => finding.Severity == "high" && finding.Title == "PowerShell policy bypass");
-        Assert.Contains(findings, finding => finding.Severity == "medium" && finding.Title == "Shell process spawned");
         Assert.Contains(findings, finding => finding.Severity == "medium" && finding.Title == "Package install command");
         Assert.Contains(findings, finding => finding.Severity == "medium" && finding.Title == "Network transfer tool used");
         Assert.Contains(findings, finding => finding.Severity == "medium" && finding.Title == "User-facing write outside watched root");
@@ -435,7 +480,8 @@ public sealed class NormalizationTests
         Assert.Contains("Activity Buckets", html, StringComparison.Ordinal);
         Assert.Contains("No medium/high observations", html, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("no attributed events", html, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Mostly temp churn", html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("No high-signal activity summary was derived", html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Temp Churn", html, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("known bytes changed", html, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -511,8 +557,8 @@ public sealed class NormalizationTests
 
         var html = HtmlReport.Render(session);
 
-        Assert.Contains("Watched Root Changes", html, StringComparison.Ordinal);
-        Assert.Contains("watched-root paths changed", html, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Project / User File Changes", html, StringComparison.Ordinal);
+        Assert.Contains("project/user paths changed", html, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Unknown", html, StringComparison.Ordinal);
         Assert.Contains("Live ETW file events often do not include file-size deltas", html, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("project files changed", html, StringComparison.OrdinalIgnoreCase);

@@ -43,7 +43,7 @@ Implemented:
 - Startup folder write findings
 - service image-path and scheduled task XML command/argument details
 - readable service start/type labels and concise scheduled task trigger/condition summaries
-- higher-signal risk observations for sensitive paths, shell spawns, package installs, network tools, external endpoints, and outside-root writes
+- higher-signal risk observations for sensitive paths, PowerShell bypass, package installs, network tools, external endpoints, and outside-root writes
 - HTML, JSON, CSV, SQLite, AI activity, and cleanup outputs
 - conservative cleanup planner with likely-safe cache/temp candidates and review-only app-data candidates
 - self-contained `win-x64` release packaging script with native ETW support files
@@ -51,7 +51,7 @@ Implemented:
 - first-screen whole-app summary via `Big Picture` and `Activity Buckets`
 - polished first-screen HTML summary with risk state, priority observations, and compact session cards
 - capture settings displayed in reports so disabled categories are clear
-- watched-root changes are labeled separately from source/project intent
+- project/user changes are labeled separately from raw watched-root, cache/temp, `.git`, and runtime activity
 - byte totals are labeled as known bytes because live ETW events often lack size deltas
 - process identity snapshots attached to file and network events for attribution
 - attribution confidence and reason attached to file/network events
@@ -93,14 +93,15 @@ Recent Phase 1 fixes:
 - running app picker added for friendlier `record codex --watch .` style workflows
 - app-specific AI profiles added on top of the generic `ai-code` defaults
 - automatic report opening added with `--no-open` escape hatch
-- report wording tightened for watched-root changes and known-byte totals
+- report wording tightened for project/user changes, filtered AI profile noise, and known-byte totals
+- Codex profile tuned against a real session: `.codex` state, SQLite `etilqs_*` churn, encoded shell bootstrap commands, and internal git introspection no longer dominate the AI activity story
 
 Current proof point:
 
 ```txt
 Record Codex Desktop, Claude Desktop, or another Electron app.
-AppLedger shows app-data churn, project file changes when a watch root is provided,
-shell and git commands, sensitive file access, rename/delete activity, sampled endpoints,
+AppLedger shows app-data churn, project/user file changes even when an AI app edits under Documents outside the watched repo,
+developer commands, sensitive file access, rename/delete activity, sampled endpoints,
 and grouped process activity.
 ```
 
@@ -130,21 +131,28 @@ Immediate next work should stay focused on making AI desktop app sessions more o
 
 Goal: make Codex/Cursor/VS Code/Claude sessions the strongest demo.
 
-Build:
+Built now:
 
-- tune Codex/Claude/Cursor/VS Code filter presets from real reports
-- better grouping of source/project files vs watched-root temp files, cache/temp, and internal repo files
+- Codex profile tuned against a real Codex Desktop session
+- Codex state (`.codex`), SQLite `etilqs_*` temp churn, app cache/log/sentry folders, AppLedger artifacts, and `.git` internals are filtered or separated from the main AI activity story
+- source-like project/user files under Documents/Desktop/Downloads are detected even when the AI app edits outside the watched repo
+- internal git introspection commands are filtered from Developer Commands
+- encoded PowerShell bootstrap commands are demoted from medium risk and hidden from the developer-command summary
 - command grouping by high-level action
+
+Next build:
+
+- tune Claude/Cursor/VS Code filter presets from longer real reports
 - improved sensitive path reporting
 - cleaner process summary / process tree presentation
 
 Success looks like:
 
 ```txt
-Watched-root paths changed: 6
-Commands run: 9
+Project/user paths changed: 6
+Developer commands: 6
 Sensitive paths touched: .env
-Shells spawned: PowerShell
+Tests run: 2
 ```
 
 ### 2. Dedicated Persistence Summary
@@ -177,7 +185,7 @@ Success looks like the first screen answering:
 
 ```txt
 Big picture:
-- touched 8 watched-root paths
+- touched 8 project/user paths
 - read .env
 - spawned PowerShell
 - ran 6 git commands
@@ -255,7 +263,7 @@ AppLedger shows:
 - package installs
 - tests run
 - git commands
-- shell spawns
+- PowerShell bypass or encoded-shell observations when meaningful
 - .env access
 - network destinations
 - startup registry unchanged

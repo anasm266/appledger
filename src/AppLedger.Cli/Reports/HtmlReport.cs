@@ -185,7 +185,7 @@ internal static class HtmlReport
             <section>
               <h2>AI Coding Activity</h2>
               <div class="grid">
-                <div class="metric"><strong>{{ai.ProjectChanges.TotalChanged:N0}}</strong><span>watched-root paths changed</span></div>
+                <div class="metric"><strong>{{ai.ProjectChanges.TotalChanged:N0}}</strong><span>project/user paths changed</span></div>
                 <div class="metric"><strong>{{ai.Commands.PackageInstalls:N0}}</strong><span>package installs</span></div>
                 <div class="metric"><strong>{{ai.Commands.GitCommands:N0}}</strong><span>git commands</span></div>
                 <div class="metric"><strong>{{ai.Commands.TestCommands:N0}}</strong><span>test commands</span></div>
@@ -211,8 +211,8 @@ internal static class HtmlReport
             </section>
 
             <section>
-              <h2>Watched Root Changes</h2>
-              {{(ai.ChangedProjectFiles.Count == 0 ? "<p class=\"muted\">No watched-root file changes detected.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Action</th><th>Source</th><th>Category</th><th>Path</th></tr></thead><tbody>{projectFiles}</tbody></table></div>")}}
+              <h2>Project / User File Changes</h2>
+              {{(ai.ChangedProjectFiles.Count == 0 ? "<p class=\"muted\">No project or user-facing file changes detected.</p>" : $"<div class=\"panel\"><table><thead><tr><th>Action</th><th>Source</th><th>Category</th><th>Path</th></tr></thead><tbody>{projectFiles}</tbody></table></div>")}}
             </section>
 
             <section>
@@ -348,7 +348,7 @@ internal static class HtmlReport
         var riskLabel = riskCount == 0 ? "no medium/high observations" : "medium/high observations";
         var projectLabel = session.WatchRoots.Count == 0
             ? "no watched root snapshot"
-            : "watched-root paths changed";
+            : "project/user paths changed";
         var commandLabel = BuildCommandCardLabel(ai.Commands);
         var networkLabel = networkOverview.Destinations.Count == 1 ? "destination group" : "destination groups";
         var attributionValue = attribution.Total == 0

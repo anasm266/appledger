@@ -26,13 +26,15 @@ Working now:
 - grouped network destination/process summaries
 - full-app summary layer with `Big Picture` and `Activity Buckets`
 - first-screen HTML report summary with risk state, priority observations, and compact session cards
-- watched-root changes labeled separately from source/project intent
+- project/user changes labeled separately from raw watched-root, cache/temp, `.git`, app-state, and runtime activity
+- source-like project/user files detected under Documents/Desktop/Downloads even when an AI app edits outside the watched repo
 - known-byte wording for ETW sessions where size deltas are unavailable
 - report-visible capture settings, including disabled file-read capture
 - report-visible include/exclude filters
 - process identity snapshots on file/network events for stronger attribution
 - attribution confidence and reason in JSON, CSV, SQLite, and HTML reports
 - higher-signal risk observations for AI coding sessions
+- Codex profile tuned against a real Codex Desktop session, including `.codex` state, SQLite `etilqs_*` temp churn, encoded shell bootstrap, and internal git introspection filtering
 - broader persistence risk observations for startup registry, Startup folders, services, scheduled tasks, protocol handlers, and file associations
 - dedicated Persistence Summary in HTML with explicit clean-state wording
 - service image-path and scheduled task command/argument details where available
@@ -55,14 +57,15 @@ Verified against real sessions:
 
 ## Next Execution Order
 
-### 1. Tune AI Session Profiles
+### 1. Continue AI Session Profile Tuning
 
-Tune first-class profile behavior for:
+Codex has an initial real-run tuning pass. Continue first-class profile behavior for:
 
-- Codex
 - Claude
 - Cursor
 - VS Code
+
+For Codex, keep validating longer sessions and only add filters when the report shows repeated low-signal behavior.
 
 Keep this refactor-friendly: if the analyzer grows while tuning app-specific behavior, split `Analysis/Analyzers.cs` into profile-specific files instead of letting it become the new monolith.
 
@@ -97,7 +100,7 @@ Built:
 
 Next:
 
-- tune Codex/Claude/Cursor/VS Code profile filters from longer real sessions
+- tune Claude/Cursor/VS Code profile filters from longer real sessions
 - consider a persistence-specific SQLite table if querying by persistence type becomes useful
 - add more runtime targets only if users ask for non-x64 Windows packages
 

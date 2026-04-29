@@ -46,6 +46,8 @@ Implemented:
 - higher-signal risk observations for sensitive paths, shell spawns, package installs, network tools, external endpoints, and outside-root writes
 - HTML, JSON, CSV, SQLite, AI activity, and cleanup outputs
 - conservative cleanup planner with likely-safe cache/temp candidates and review-only app-data candidates
+- self-contained single-file `win-x64` release packaging script
+- GitHub Actions release workflow for tag/manual builds and release assets
 - first-screen whole-app summary via `Big Picture` and `Activity Buckets`
 - polished first-screen HTML summary with risk state, priority observations, and compact session cards
 - capture settings displayed in reports so disabled categories are clear
@@ -85,6 +87,8 @@ Recent Phase 1 fixes:
 - scheduled task command/action and service image-path details surfaced when available
 - structured persistence export added to session JSON
 - service start/type labels and scheduled task trigger/condition summaries added
+- release packaging added with `appledger-win-x64.zip` and SHA256 output
+- GitHub release workflow added for tag-triggered release asset upload
 - cleanup guidance added to reports and cleanup.ps1
 - running app picker added for friendlier `record codex --watch .` style workflows
 - app-specific AI profiles added on top of the generic `ai-code` defaults
@@ -113,6 +117,7 @@ Still rough or incomplete:
 - app-specific filter presets exist, but they still need tuning against longer real Codex, Claude, Cursor, and VS Code sessions
 - large sessions still need test coverage and tuning
 - no desktop UI yet
+- release packaging currently targets `win-x64`; additional runtime zips can be added later
 - `Analysis/Analyzers.cs` is still the largest file and can be split further once AI profiles mature
 
 These are product polish and fidelity gaps, not viability gaps. The tool is already demonstrable.
@@ -206,7 +211,7 @@ Build:
 - stronger process-tree and timeline sections
 - more opinionated cleanup guidance
 - better export ergonomics
-- release-ready single binary packaging
+- signed binaries and broader runtime packaging if needed
 - lightweight local UI once collector/report behavior is stable
 
 The rule for this phase:

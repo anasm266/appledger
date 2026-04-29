@@ -38,6 +38,8 @@ Working now:
 - service image-path and scheduled task command/argument details where available
 - structured `Persistence` export in `session.json`
 - readable service start/type labels and concise scheduled task trigger/condition summaries
+- self-contained single-file `win-x64` release packaging
+- GitHub Actions workflow for release zips and SHA256 artifacts
 - conservative cleanup guidance in HTML and `cleanup.ps1`
 - active process-tree membership guarded against PID reuse before ETW/network sync
 - HTML / JSON / CSV / SQLite outputs
@@ -97,6 +99,7 @@ Next:
 
 - tune Codex/Claude/Cursor/VS Code profile filters from longer real sessions
 - consider a persistence-specific SQLite table if querying by persistence type becomes useful
+- add more runtime targets only if users ask for non-x64 Windows packages
 
 ## Not Next
 

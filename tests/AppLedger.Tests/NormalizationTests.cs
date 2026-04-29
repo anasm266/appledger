@@ -318,6 +318,7 @@ public sealed class NormalizationTests
                 new RegistryEvent(RegistryEventKind.Created, @"CurrentUser\Software\Microsoft\Windows\CurrentVersion\Run\Agent", null, "agent.exe"),
                 new RegistryEvent(RegistryEventKind.Modified, @"LocalMachine\SYSTEM\CurrentControlSet\Services\AgentSvc\ImagePath", "old.exe", "new.exe"),
                 new RegistryEvent(RegistryEventKind.Created, @"LocalMachine\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\Agent\Id", null, "{id}"),
+                new RegistryEvent(RegistryEventKind.Created, @"LocalMachine\ScheduledTasks\Agent\Command", null, @"C:\Tools\agent.exe"),
                 new RegistryEvent(RegistryEventKind.Created, @"CurrentUser\Software\Classes\agent\URL Protocol", null, ""),
                 new RegistryEvent(RegistryEventKind.Modified, @"CurrentUser\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.txt\UserChoice\ProgId", "txtfile", "agent.file")
             ],
@@ -329,6 +330,22 @@ public sealed class NormalizationTests
         Assert.Contains(findings, finding => finding.Severity == "high" && finding.Title == "Scheduled task persistence change");
         Assert.Contains(findings, finding => finding.Severity == "medium" && finding.Title == "Protocol handler change");
         Assert.Contains(findings, finding => finding.Severity == "medium" && finding.Title == "File association change");
+    }
+
+    [Fact]
+    public void PersistenceAnalyzer_ExtractsServiceAndScheduledTaskCommands()
+    {
+        var summary = PersistenceAnalyzer.Build(
+            [],
+            [
+                new RegistryEvent(RegistryEventKind.Modified, @"LocalMachine\SYSTEM\CurrentControlSet\Services\AgentSvc\ImagePath", "old.exe", @"C:\Tools\agent.exe --service"),
+                new RegistryEvent(RegistryEventKind.Created, @"LocalMachine\ScheduledTasks\Agent\Command", null, @"C:\Tools\agent.exe"),
+                new RegistryEvent(RegistryEventKind.Created, @"LocalMachine\ScheduledTasks\Agent\Arguments", null, "--daily")
+            ]);
+
+        Assert.Contains(summary.Items, item => item.Kind == "service" && item.Name == "AgentSvc" && item.Detail.Contains(@"C:\Tools\agent.exe --service", StringComparison.Ordinal));
+        Assert.Contains(summary.Items, item => item.Kind == "scheduled-task" && item.Name == "Agent" && item.Detail.Contains(@"C:\Tools\agent.exe", StringComparison.Ordinal));
+        Assert.Contains(summary.Items, item => item.Kind == "scheduled-task" && item.Name == "Agent" && item.Detail.Contains("--daily", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -407,6 +424,30 @@ public sealed class NormalizationTests
         Assert.Contains("Cleanup Guidance", html, StringComparison.Ordinal);
         Assert.Contains("likely cache/temp cleanup", html, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("review-only app data", html, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void HtmlReport_RendersPersistenceSummaryCleanAndChangedStates()
+    {
+        var cleanHtml = HtmlReport.Render(EmptySession());
+
+        Assert.Contains("Persistence Summary", cleanHtml, StringComparison.Ordinal);
+        Assert.Contains("Added no startup persistence", cleanHtml, StringComparison.OrdinalIgnoreCase);
+
+        var changed = EmptySession() with
+        {
+            RegistryEvents =
+            [
+                new RegistryEvent(RegistryEventKind.Modified, @"LocalMachine\SYSTEM\CurrentControlSet\Services\AgentSvc\ImagePath", "old.exe", @"C:\Tools\agent.exe --service"),
+                new RegistryEvent(RegistryEventKind.Created, @"LocalMachine\ScheduledTasks\Agent\Command", null, @"C:\Tools\agent.exe")
+            ]
+        };
+
+        var changedHtml = HtmlReport.Render(changed);
+
+        Assert.Contains("service changes", changedHtml, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(@"C:\Tools\agent.exe --service", changedHtml, StringComparison.Ordinal);
+        Assert.Contains("scheduled task", changedHtml, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

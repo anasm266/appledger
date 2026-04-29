@@ -26,6 +26,8 @@ internal static class HtmlReport
         var activityBuckets = string.Join(Environment.NewLine, activityOverview.Buckets.Select(RenderActivityBucket));
         var networkDestinations = string.Join(Environment.NewLine, networkOverview.Destinations.Select(RenderNetworkDestinationRow));
         var networkProcesses = string.Join(Environment.NewLine, networkOverview.Processes.Select(RenderNetworkProcessRow));
+        var persistence = PersistenceAnalyzer.Build(session.FileEvents, session.RegistryEvents);
+        var persistenceRows = string.Join(Environment.NewLine, persistence.Items.Select(RenderPersistenceRow));
         var cleanupPlan = CleanupPlanner.Build(session);
         var cleanupSafeRows = string.Join(Environment.NewLine, cleanupPlan.Safe.Select(RenderCleanupCandidateRow));
         var cleanupReviewRows = string.Join(Environment.NewLine, cleanupPlan.Review.Select(RenderCleanupCandidateRow));
@@ -146,6 +148,23 @@ internal static class HtmlReport
             <section>
               <h2>Risky Observations</h2>
               {{(session.Findings.Count == 0 ? "<p class=\"muted\">No risky observations from the Phase 1 analyzers.</p>" : $"<ul class=\"findings\">{findings}</ul>")}}
+            </section>
+
+            <section>
+              <h2>Persistence Summary</h2>
+              <div class="grid">
+                <div class="metric"><strong>{{(persistence.StartupCount == 0 ? "Clear" : persistence.StartupCount.ToString("N0", CultureInfo.InvariantCulture))}}</strong><span>startup entries</span></div>
+                <div class="metric"><strong>{{persistence.ServiceCount:N0}}</strong><span>service changes</span></div>
+                <div class="metric"><strong>{{persistence.ScheduledTaskCount:N0}}</strong><span>scheduled task changes</span></div>
+                <div class="metric"><strong>{{persistence.ProtocolHandlerCount:N0}}</strong><span>protocol handlers</span></div>
+                <div class="metric"><strong>{{persistence.FileAssociationCount:N0}}</strong><span>file associations</span></div>
+              </div>
+              {{(!persistence.HasChanges
+                  ? "<p class=\"muted\"><strong>Added no startup persistence.</strong> No service, scheduled task, protocol handler, file association, Startup folder, or startup registry changes were detected by the current Phase 1 analyzers.</p>"
+                  : $"""
+              <p class="muted">Persistence checks cover startup registry keys, Startup folders, services, scheduled task cache/XML actions, protocol handlers, and file associations. Service and scheduled-task rows include captured command/action values when Windows exposes them.</p>
+              <div class="panel"><table><thead><tr><th>Type</th><th>Action</th><th>Name</th><th>Detail</th><th>Before</th><th>After</th></tr></thead><tbody>{persistenceRows}</tbody></table></div>
+              """)}}
             </section>
 
             <section>
@@ -486,6 +505,20 @@ internal static class HtmlReport
 
     private static string RenderCleanupCandidateRow(CleanupCandidate candidate) =>
         $"<tr><td><code>{Esc(candidate.Path)}</code></td><td>{Esc(candidate.Category)}</td><td>{candidate.FileCount:N0}</td><td>{Format.Bytes(candidate.BytesAdded)}</td><td>{Esc(candidate.Reason)}</td></tr>";
+
+    private static string RenderPersistenceRow(PersistenceItem item) =>
+        $"<tr><td><span class=\"tag\">{Esc(PersistenceKindLabel(item.Kind))}</span></td><td>{Esc(item.Action)}</td><td>{Esc(item.Name)}</td><td>{Esc(item.Detail)}</td><td><code>{Esc(item.Before ?? "")}</code></td><td><code>{Esc(item.After ?? "")}</code></td></tr>";
+
+    private static string PersistenceKindLabel(string kind) => kind switch
+    {
+        "startup-registry" => "startup registry",
+        "startup-folder" => "startup folder",
+        "service" => "service",
+        "scheduled-task" => "scheduled task",
+        "protocol-handler" => "protocol handler",
+        "file-association" => "file association",
+        _ => kind
+    };
 
     private static string RenderActivityBucket(ActivityBucketSummary bucket)
     {

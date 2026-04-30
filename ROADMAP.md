@@ -94,7 +94,7 @@ Recent Phase 1 fixes:
 - app-specific AI profiles added on top of the generic `ai-code` defaults
 - automatic report opening added with `--no-open` escape hatch
 - report wording tightened for project/user changes, filtered AI profile noise, and known-byte totals
-- Codex profile tuned against a real session: `.codex` state, SQLite `etilqs_*` churn, encoded shell bootstrap commands, and internal git introspection no longer dominate the AI activity story
+- Codex profile tuned against real sessions: `.codex` state, SQLite `etilqs_*` churn, encoded shell bootstrap commands, and internal git introspection no longer dominate the AI activity story
 
 Current proof point:
 

@@ -408,7 +408,7 @@ Recent Phase 1 progress:
 - app-specific AI profiles for Codex, Claude, Cursor, and VS Code
 - automatic report opening with `--no-open` for scripted runs
 - report wording now distinguishes project/user file changes from raw watched-root, app-state, cache/temp, and runtime activity
-- Codex profile tuning from a real session now filters `.codex` state, SQLite `etilqs_*` temp files, encoded shell bootstrap commands, and internal git introspection from the main AI activity story
+- Codex profile tuning from real sessions now filters `.codex` state, SQLite `etilqs_*` temp files, encoded shell bootstrap commands, and internal git introspection from the main AI activity story
 - process identity fields added to JSON, CSV, SQLite, and HTML report views for file/network attribution
 - attribution confidence summary added to the HTML report
 - process-tree membership now prunes stale reused PIDs before syncing ETW/network filters

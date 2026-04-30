@@ -664,6 +664,12 @@ internal static class AiCodingAnalyzer
         return normalized.Contains("git rev-parse --abbrev-ref", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git rev-list --count", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git rev-parse --verify --quiet", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("git status --porcelain=v1 -z", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("git rev-parse --git-dir", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("git remote", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("git remote show origin", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("git rev-parse --show-toplevel", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("git rev-parse --git-path codex-shell-environment.json", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git for-each-ref --format=%(upstream:short)", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git merge-base", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git symbolic-ref", StringComparison.OrdinalIgnoreCase);

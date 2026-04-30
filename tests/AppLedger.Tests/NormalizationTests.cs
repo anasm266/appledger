@@ -284,8 +284,12 @@ public sealed class NormalizationTests
         {
             new(500, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git rev-list --count origin/main..HEAD", At(49), At(49), At(50)),
             new(501, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git rev-parse --verify --quiet origin/main", At(50), At(50), At(51)),
-            new(502, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git status --short", At(51), At(51), At(52)),
-            new(503, 1, "npm.cmd", @"C:\Program Files\nodejs\npm.cmd", "npm test", At(52), At(52), At(53))
+            new(502, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git status --porcelain=v1 -z", At(51), At(51), At(52)),
+            new(503, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git rev-parse --git-dir", At(52), At(52), At(53)),
+            new(504, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git remote show origin", At(53), At(53), At(54)),
+            new(505, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git rev-parse --git-path codex-shell-environment.json", At(54), At(54), At(55)),
+            new(506, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git status --short", At(55), At(55), At(56)),
+            new(507, 1, "npm.cmd", @"C:\Program Files\nodejs\npm.cmd", "npm test", At(56), At(56), At(57))
         };
 
         var ai = AiCodingAnalyzer.Build([], [], processes);

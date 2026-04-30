@@ -60,7 +60,7 @@ Verified against real sessions:
 
 ### 1. Continue AI Session Profile Tuning
 
-Codex has real-run tuning coverage, including filters for runtime/build churn and internal git probes while preserving explicit user-facing commands. Continue first-class profile behavior for:
+Codex has real-run tuning coverage, including filters for runtime/build churn, internal git probes, blank helper git processes, and branch/status polling while preserving explicit user-facing commands. Continue first-class profile behavior for:
 
 - Claude
 - Cursor

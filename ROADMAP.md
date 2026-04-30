@@ -141,6 +141,7 @@ Built now:
 - source-like project/user files under Documents/Desktop/Downloads are detected even when the AI app edits outside the watched repo
 - internal git introspection commands are filtered from Developer Commands
 - internal git introspection commands are filtered from the AI process timeline
+- Codex branch/status probes such as `for-each-ref --count=100` and blank helper git processes are filtered from the AI story
 - directory-only create/delete churn under watched roots is not counted as project file changes
 - encoded PowerShell bootstrap commands are demoted from medium risk and hidden from the developer-command summary
 - command grouping by high-level action

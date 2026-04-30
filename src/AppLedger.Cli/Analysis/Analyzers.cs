@@ -696,6 +696,7 @@ internal static class AiCodingAnalyzer
             || normalized.Equals("git rev-parse --show-toplevel", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git rev-parse --git-path codex-shell-environment.json", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git config --file .gitmodules --get-regexp path", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("git for-each-ref --count=", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git for-each-ref --format=%(upstream:short)", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git merge-base", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git symbolic-ref", StringComparison.OrdinalIgnoreCase);
@@ -710,6 +711,11 @@ internal static class AiCodingAnalyzer
         }
 
         var command = process.CommandLine ?? "";
+        if (name is "git" && string.IsNullOrWhiteSpace(command))
+        {
+            return false;
+        }
+
         if (command.Contains("credential-manager", StringComparison.OrdinalIgnoreCase)
             || command.Contains("git-remote-https", StringComparison.OrdinalIgnoreCase)
             || command.Contains("git remote-https", StringComparison.OrdinalIgnoreCase)
@@ -740,6 +746,7 @@ internal static class AiCodingAnalyzer
             .Replace("C:\\Program Files\\Git\\cmd\\git.exe", "git", StringComparison.OrdinalIgnoreCase)
             .Replace("C:\\Program Files\\Git\\mingw64\\bin\\git.exe", "git", StringComparison.OrdinalIgnoreCase)
             .Replace("C:/Program Files/Git/mingw64/libexec/git-core\\git.exe", "git", StringComparison.OrdinalIgnoreCase)
+            .Replace("git.exe ", "git ", StringComparison.OrdinalIgnoreCase)
             .Replace("C:\\windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "powershell", StringComparison.OrdinalIgnoreCase)
             .Replace("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "powershell", StringComparison.OrdinalIgnoreCase);
 

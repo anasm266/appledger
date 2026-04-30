@@ -55,7 +55,7 @@ Current Phase 1 capabilities:
 - normalize rename targets in regenerated reports and display renames as `old -> new`
 - group `.git` internals and runtime bookkeeping out of the main report tables
 - control large sessions with `--no-reads`, `--max-events <n>`, and `--no-sqlite`
-- keep noisy defaults out of AI sessions, including `node_modules`, `.git\objects`, `.git\logs`, AppLedger output folders, SQLite temp churn, Codex state, common cache folders, and app-specific cache/log folders
+- keep noisy defaults out of AI sessions, including `node_modules`, `bin`, `obj`, `.git\objects`, `.git\logs`, AppLedger output folders, SQLite temp churn, PowerShell policy/startup probes, .NET telemetry/build caches, Codex state, common cache folders, and app-specific cache/log folders
 - cover normalization and summary logic with unit tests
 
 Generated artifacts:
@@ -141,7 +141,7 @@ The best current control flags for noisy sessions are:
 
 Profiles bundle those flags for normal use. The `record` command infers these profiles from the target app unless `--profile` is provided:
 
-- `--profile ai-code` enables whole-app live capture, disables file reads, caps live file events at `50,000`, snapshots the current directory, and excludes common dependency/cache/output churn
+- `--profile ai-code` enables whole-app live capture, disables file reads, caps live file events at `50,000`, snapshots the current directory, and excludes common dependency/cache/output/runtime churn
 - `--profile codex` adds Codex-specific cache/log excludes
 - `--profile claude` adds Claude-specific cache/log excludes
 - `--profile cursor` adds Cursor-specific cache/log excludes
@@ -150,6 +150,8 @@ Profiles bundle those flags for normal use. The `record` command infers these pr
 
 When a profile disables a category, the report labels it as disabled. For example, `ai-code` reports file reads as `Off` / `file reads disabled` instead of implying AppLedger observed zero reads.
 Active include/exclude filters are also shown in the report capture settings.
+
+The Codex profile has been tuned against real desktop recordings. It filters repeated low-signal churn from Codex state, SQLite temp files, PowerShell startup/profile probes, .NET telemetry/NuGet/MSBuild temp files, build outputs, and internal git introspection while keeping user-facing project changes, explicit developer commands, network endpoints, and persistence findings visible.
 
 ## Install
 

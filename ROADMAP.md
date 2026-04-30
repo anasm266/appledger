@@ -96,7 +96,7 @@ Recent Phase 1 fixes:
 - app-specific AI profiles added on top of the generic `ai-code` defaults
 - automatic report opening added with `--no-open` escape hatch
 - report wording tightened for project/user changes, filtered AI profile noise, and known-byte totals
-- Codex profile tuned against real sessions: `.codex` state, SQLite `etilqs_*` churn, encoded shell bootstrap commands, and internal git introspection no longer dominate the AI activity story
+- Codex profile tuned against real sessions: `.codex` state, SQLite `etilqs_*` churn, PowerShell policy/startup probes, .NET telemetry/build cache churn, `bin`/`obj` outputs, encoded shell bootstrap commands, directory-only project events, and internal git introspection no longer dominate the AI activity story
 
 Current proof point:
 
@@ -117,7 +117,7 @@ Still rough or incomplete:
 - command parsing is pragmatic, not exhaustive
 - registry coverage focuses on high-value persistence locations, not broad whole-registry diffs
 - scheduled task parsing focuses on concise action, trigger, and condition summaries, not full XML reproduction
-- app-specific filter presets exist, but they still need tuning against longer real Codex, Claude, Cursor, and VS Code sessions
+- app-specific filter presets exist, but Claude, Cursor, and VS Code still need the same real-session tuning pass Codex just received
 - large sessions still need test coverage and tuning
 - no desktop UI yet
 - release packaging currently targets `win-x64`; additional runtime zips can be added later
@@ -137,8 +137,11 @@ Built now:
 
 - Codex profile tuned against a real Codex Desktop session
 - Codex state (`.codex`), SQLite `etilqs_*` temp churn, app cache/log/sentry folders, AppLedger artifacts, and `.git` internals are filtered or separated from the main AI activity story
+- PowerShell startup/profile probes, .NET telemetry/NuGet/MSBuild temp files, and `bin`/`obj` build outputs are filtered from Codex-profile noise
 - source-like project/user files under Documents/Desktop/Downloads are detected even when the AI app edits outside the watched repo
 - internal git introspection commands are filtered from Developer Commands
+- internal git introspection commands are filtered from the AI process timeline
+- directory-only create/delete churn under watched roots is not counted as project file changes
 - encoded PowerShell bootstrap commands are demoted from medium risk and hidden from the developer-command summary
 - command grouping by high-level action
 

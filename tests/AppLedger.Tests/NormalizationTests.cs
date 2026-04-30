@@ -36,6 +36,13 @@ public sealed class NormalizationTests
         Assert.Contains("Codex\\sentry", options.PathFilter.Excludes);
         Assert.Contains(".codex", options.PathFilter.Excludes);
         Assert.Contains("etilqs_*", options.PathFilter.Excludes);
+        Assert.Contains("__PSScriptPolicyTest_*", options.PathFilter.Excludes);
+        Assert.Contains("StartupProfileData-NonInteractive", options.PathFilter.Excludes);
+        Assert.Contains(".dotnet\\TelemetryStorageService", options.PathFilter.Excludes);
+        Assert.Contains("NuGet\\v3-cache", options.PathFilter.Excludes);
+        Assert.Contains("MSBuildTemp*", options.PathFilter.Excludes);
+        Assert.Contains("bin", options.PathFilter.Excludes);
+        Assert.Contains("obj", options.PathFilter.Excludes);
         Assert.Contains("node_repl\\node_modules", options.PathFilter.Excludes);
     }
 
@@ -278,6 +285,23 @@ public sealed class NormalizationTests
     }
 
     [Fact]
+    public void AiCodingAnalyzer_IgnoresDirectoryOnlyProjectChanges()
+    {
+        var watchRoot = @"C:\Users\Anas\Documents\repo";
+        var files = FileEventMerger.NormalizeForSession([
+            Live(FileEventKind.Created, Path.Combine(watchRoot, "agent-work"), observedAt: At(49), processId: 400, processName: "codex.exe"),
+            Live(FileEventKind.Deleted, Path.Combine(watchRoot, "agent-work"), observedAt: At(50), processId: 400, processName: "codex.exe"),
+            Live(FileEventKind.Modified, Path.Combine(watchRoot, "agent-work", "notes.txt"), observedAt: At(51), processId: 400, processName: "codex.exe")
+        ]);
+
+        var ai = AiCodingAnalyzer.Build([watchRoot], files, []);
+
+        Assert.Equal(1, ai.ProjectChanges.TotalChanged);
+        Assert.Contains(ai.ChangedProjectFiles, file => file.RelativePath.EndsWith(@"agent-work\notes.txt", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(ai.ChangedProjectFiles, file => file.RelativePath.Equals("agent-work", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void AiCodingAnalyzer_FiltersInternalGitIntrospectionCommands()
     {
         var processes = new List<ProcessRecord>
@@ -299,6 +323,9 @@ public sealed class NormalizationTests
         Assert.Equal(1, ai.Commands.TestCommands);
         Assert.DoesNotContain(ai.DeveloperCommands, command => command.CommandLine.Contains("rev-list", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(ai.DeveloperCommands, command => command.CommandLine.Contains("git status", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(ai.ProcessTimeline, process => process.CommandLine?.Contains("rev-parse", StringComparison.OrdinalIgnoreCase) == true);
+        Assert.DoesNotContain(ai.ProcessTimeline, process => process.CommandLine?.Contains("porcelain", StringComparison.OrdinalIgnoreCase) == true);
+        Assert.Contains(ai.ProcessTimeline, process => process.CommandLine?.Contains("git status --short", StringComparison.OrdinalIgnoreCase) == true);
     }
 
     [Fact]
@@ -352,6 +379,28 @@ public sealed class NormalizationTests
         Assert.Contains(findings, finding => finding.Severity == "medium" && finding.Title == "Network transfer tool used");
         Assert.Contains(findings, finding => finding.Severity == "medium" && finding.Title == "User-facing write outside watched root");
         Assert.Contains(findings, finding => finding.Severity == "info" && finding.Title == "External network destinations");
+    }
+
+    [Fact]
+    public void Analyzer_IgnoresDotNetAndPowerShellRuntimeWritesOutsideWatchRoot()
+    {
+        var watchRoot = @"C:\Users\Anas\Documents\repo";
+        var files = FileEventMerger.NormalizeForSession([
+            Live(FileEventKind.Created, @"C:\Users\Anas\.dotnet\TelemetryStorageService\telemetry.trn", observedAt: At(56), processId: 100, processName: "dotnet.exe"),
+            Live(FileEventKind.Modified, @"C:\Users\Anas\AppData\Local\Microsoft\Windows\PowerShell\StartupProfileData-NonInteractive", observedAt: At(57), processId: 101, processName: "powershell.exe"),
+            Live(FileEventKind.Created, @"C:\Users\Anas\AppData\Local\Temp\__PSScriptPolicyTest_abc.ps1", observedAt: At(58), processId: 101, processName: "powershell.exe")
+        ]);
+
+        var findings = Analyzer.Find(
+            [watchRoot],
+            watchAll: true,
+            files,
+            [],
+            [],
+            [],
+            []);
+
+        Assert.DoesNotContain(findings, finding => finding.Title == "User-facing write outside watched root");
     }
 
     [Fact]

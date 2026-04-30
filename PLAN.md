@@ -34,7 +34,7 @@ Working now:
 - process identity snapshots on file/network events for stronger attribution
 - attribution confidence and reason in JSON, CSV, SQLite, and HTML reports
 - higher-signal risk observations for AI coding sessions
-- Codex profile tuned against real Codex Desktop sessions, including `.codex` state, SQLite `etilqs_*` temp churn, PowerShell policy/startup probes, .NET telemetry/NuGet/MSBuild temp files, `bin`/`obj` build outputs, encoded shell bootstrap, directory-only project churn, and internal git introspection filtering
+- Codex profile tuned against real Codex Desktop sessions, including `.codex` state, SQLite `etilqs_*` temp churn, PowerShell policy/startup probes, .NET telemetry/NuGet/MSBuild temp files, `bin`/`obj` build outputs, Codex internal encoded-PowerShell parser findings, GitHub metadata probe findings, directory-only project churn, and internal git introspection filtering
 - broader persistence risk observations for startup registry, Startup folders, services, scheduled tasks, protocol handlers, and file associations
 - dedicated Persistence Summary in HTML with explicit clean-state wording
 - service image-path and scheduled task command/argument details where available
@@ -60,7 +60,7 @@ Verified against real sessions:
 
 ### 1. Continue AI Session Profile Tuning
 
-Codex has real-run tuning coverage, including filters for runtime/build churn, internal git probes, blank helper git processes, and branch/status polling while preserving explicit user-facing commands. Continue first-class profile behavior for:
+Codex has real-run tuning coverage, including filters for runtime/build churn, internal git probes, blank helper git processes, branch/status polling, its internal encoded-PowerShell parser, and GitHub metadata probe findings while preserving explicit user-facing commands and raw network/process detail. Continue first-class profile behavior for:
 
 - Claude
 - Cursor

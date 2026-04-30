@@ -45,6 +45,7 @@ Implemented:
 - service image-path and scheduled task XML command/argument details
 - readable service start/type labels and concise scheduled task trigger/condition summaries
 - higher-signal risk observations for sensitive paths, PowerShell bypass, package installs, network tools, external endpoints, and outside-root writes
+- Codex internal encoded-PowerShell parser and GitHub metadata probe noise suppressed from risk findings while still appearing in raw process/network details
 - HTML, JSON, CSV, SQLite, AI activity, and cleanup outputs
 - conservative cleanup planner with likely-safe cache/temp candidates and review-only app-data candidates
 - self-contained `win-x64` release packaging script with native ETW support files
@@ -96,7 +97,7 @@ Recent Phase 1 fixes:
 - app-specific AI profiles added on top of the generic `ai-code` defaults
 - automatic report opening added with `--no-open` escape hatch
 - report wording tightened for project/user changes, filtered AI profile noise, and known-byte totals
-- Codex profile tuned against real sessions: `.codex` state, SQLite `etilqs_*` churn, PowerShell policy/startup probes, .NET telemetry/build cache churn, `bin`/`obj` outputs, encoded shell bootstrap commands, directory-only project events, and internal git introspection no longer dominate the AI activity story
+- Codex profile tuned against real sessions: `.codex` state, SQLite `etilqs_*` churn, PowerShell policy/startup probes, .NET telemetry/build cache churn, `bin`/`obj` outputs, Codex internal encoded-PowerShell parser findings, GitHub metadata probe findings, directory-only project events, and internal git introspection no longer dominate the AI activity story
 
 Current proof point:
 
@@ -142,6 +143,7 @@ Built now:
 - internal git introspection commands are filtered from Developer Commands
 - internal git introspection commands are filtered from the AI process timeline
 - Codex branch/status probes such as `for-each-ref --count=100` and blank helper git processes are filtered from the AI story
+- Codex internal encoded-PowerShell parser and GitHub metadata probe findings are suppressed from Risky Observations
 - directory-only create/delete churn under watched roots is not counted as project file changes
 - encoded PowerShell bootstrap commands are demoted from medium risk and hidden from the developer-command summary
 - command grouping by high-level action

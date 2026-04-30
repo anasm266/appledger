@@ -14,11 +14,13 @@ internal static class Analyzer
         var findings = new List<Finding>();
 
         AddSensitivePathFindings(findings, files);
-        AddProcessFindings(findings, processes);
+        var processesByPid = BuildProcessLookup(processes);
+
+        AddProcessFindings(findings, processes, processesByPid);
         findings.AddRange(PersistenceAnalyzer.BuildFindings(PersistenceAnalyzer.Build(files, registry)));
         AddFileScopeFindings(findings, watchRoots, watchAll, files);
         AddStorageFindings(findings, topFolders);
-        AddNetworkFindings(findings, network);
+        AddNetworkFindings(findings, network, processesByPid);
 
         return findings;
     }
@@ -42,14 +44,17 @@ internal static class Analyzer
         }
     }
 
-    private static void AddProcessFindings(List<Finding> findings, IReadOnlyList<ProcessRecord> processes)
+    private static void AddProcessFindings(
+        List<Finding> findings,
+        IReadOnlyList<ProcessRecord> processes,
+        IReadOnlyDictionary<int, ProcessRecord> processesByPid)
     {
         foreach (var process in processes.Where(IsPowerShellBypass).Take(10))
         {
             AddFinding(findings, "high", "PowerShell policy bypass", process.CommandLine ?? process.Name);
         }
 
-        foreach (var process in processes.Where(IsEncodedPowerShell).Take(10))
+        foreach (var process in processes.Where(process => IsEncodedPowerShell(process, processesByPid)).Take(10))
         {
             AddFinding(findings, "info", "Encoded PowerShell command", SanitizeCommandLine(process.CommandLine) ?? process.Name);
         }
@@ -104,10 +109,14 @@ internal static class Analyzer
         }
     }
 
-    private static void AddNetworkFindings(List<Finding> findings, IReadOnlyList<NetworkEvent> network)
+    private static void AddNetworkFindings(
+        List<Finding> findings,
+        IReadOnlyList<NetworkEvent> network,
+        IReadOnlyDictionary<int, ProcessRecord> processesByPid)
     {
         var external = network
             .Where(item => IsExternalAddress(item.RemoteAddress))
+            .Where(item => !IsLowSignalNetworkProbe(item, processesByPid))
             .GroupBy(item => NetworkResolver.DisplayHost(item), StringComparer.OrdinalIgnoreCase)
             .Select(group => group.OrderBy(item => item.FirstSeen).First())
             .OrderBy(item => NetworkResolver.DisplayHost(item), StringComparer.OrdinalIgnoreCase)
@@ -182,9 +191,92 @@ internal static class Analyzer
     private static bool IsPowerShellBypass(ProcessRecord process) =>
         process.CommandLine?.Contains("ExecutionPolicy Bypass", StringComparison.OrdinalIgnoreCase) == true;
 
-    private static bool IsEncodedPowerShell(ProcessRecord process) =>
+    private static Dictionary<int, ProcessRecord> BuildProcessLookup(IReadOnlyList<ProcessRecord> processes) =>
+        processes
+            .GroupBy(process => process.ProcessId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderByDescending(process => process.CreationDate ?? DateTimeOffset.MinValue).First());
+
+    private static bool IsEncodedPowerShell(ProcessRecord process, IReadOnlyDictionary<int, ProcessRecord> processesByPid) =>
         IsPowerShellName(process.Name)
-        && process.CommandLine?.Contains("-EncodedCommand", StringComparison.OrdinalIgnoreCase) == true;
+        && process.CommandLine?.Contains("-EncodedCommand", StringComparison.OrdinalIgnoreCase) == true
+        && !IsKnownCodexEncodedPowerShellParser(process, processesByPid);
+
+    private static bool IsKnownCodexEncodedPowerShellParser(ProcessRecord process, IReadOnlyDictionary<int, ProcessRecord> processesByPid)
+    {
+        var command = process.CommandLine ?? "";
+        if (!command.Contains("-NoLogo", StringComparison.OrdinalIgnoreCase)
+            || !command.Contains("-NoProfile", StringComparison.OrdinalIgnoreCase)
+            || !command.Contains("-NonInteractive", StringComparison.OrdinalIgnoreCase)
+            || !command.Contains("-EncodedCommand", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return HasCodexAncestor(process, processesByPid);
+    }
+
+    private static bool IsLowSignalNetworkProbe(NetworkEvent item, IReadOnlyDictionary<int, ProcessRecord> processesByPid)
+    {
+        if (!IsGithubHost(NetworkResolver.DisplayHost(item))
+            || !processesByPid.TryGetValue(item.ProcessId, out var process)
+            || !IsGitRemoteHttpsProcess(process))
+        {
+            return false;
+        }
+
+        return HasCodexAncestor(process, processesByPid);
+    }
+
+    private static bool IsGithubHost(string host) =>
+        host.Equals("github.com", StringComparison.OrdinalIgnoreCase)
+        || host.EndsWith(".github.com", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsGitRemoteHttpsProcess(ProcessRecord process)
+    {
+        var name = Path.GetFileNameWithoutExtension(process.Name);
+        return name.Equals("git-remote-https", StringComparison.OrdinalIgnoreCase)
+            || process.ExecutablePath?.Contains("\\git-remote-https.exe", StringComparison.OrdinalIgnoreCase) == true
+            || process.CommandLine?.Contains("git-remote-https", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private static bool HasCodexAncestor(ProcessRecord process, IReadOnlyDictionary<int, ProcessRecord> processesByPid)
+    {
+        var current = process;
+        var seen = new HashSet<int>();
+        for (var depth = 0; depth < 8; depth++)
+        {
+            if (!seen.Add(current.ProcessId))
+            {
+                return false;
+            }
+
+            if (IsCodexProcessIdentity(current))
+            {
+                return true;
+            }
+
+            if (current.ParentProcessId == 0 || !processesByPid.TryGetValue(current.ParentProcessId, out var parent))
+            {
+                return false;
+            }
+
+            current = parent;
+        }
+
+        return false;
+    }
+
+    private static bool IsCodexProcessIdentity(ProcessRecord process)
+    {
+        var name = Path.GetFileNameWithoutExtension(process.Name);
+        return name.Contains("codex", StringComparison.OrdinalIgnoreCase)
+            || process.ExecutablePath?.Contains("\\OpenAI.Codex_", StringComparison.OrdinalIgnoreCase) == true
+            || process.ExecutablePath?.Contains("\\OpenAI\\Codex\\", StringComparison.OrdinalIgnoreCase) == true
+            || process.CommandLine?.Contains("\\OpenAI.Codex_", StringComparison.OrdinalIgnoreCase) == true
+            || process.CommandLine?.Contains("\\OpenAI\\Codex\\", StringComparison.OrdinalIgnoreCase) == true;
+    }
 
     private static bool IsNetworkToolCommand(ProcessRecord process)
     {

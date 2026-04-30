@@ -21,8 +21,17 @@ internal static class Program
 
         try
         {
+            if (args[0] is "-v" or "--version")
+            {
+                Diagnostics.PrintVersion(Diagnostics.GetVersionInfo());
+                return 0;
+            }
+
             return args[0].ToLowerInvariant() switch
             {
+                "version" => Version(),
+                "doctor" => Doctor(),
+                "install" => Install(args.Skip(1).ToArray()),
                 "run" => await RunAsync(args.Skip(1).ToArray()),
                 "attach" => await AttachAsync(args.Skip(1).ToArray()),
                 "record" => await RecordAsync(args.Skip(1).ToArray()),
@@ -39,6 +48,61 @@ internal static class Program
             Console.Error.WriteLine($"AppLedger failed: {ex.Message}");
             return 1;
         }
+    }
+
+    private static int Version()
+    {
+        Diagnostics.PrintVersion(Diagnostics.GetVersionInfo());
+        return 0;
+    }
+
+    private static int Doctor()
+    {
+        Diagnostics.PrintDoctor(Diagnostics.BuildDoctorReport(Environment.CurrentDirectory));
+        return 0;
+    }
+
+    private static int Install(string[] args)
+    {
+        if (args.Any(arg => arg is "-h" or "--help"))
+        {
+            Console.WriteLine("""
+            Usage:
+              appledger install [--from <release-dir>] [--to <install-dir>] [--add-path]
+
+            Defaults:
+              --from  current AppLedger base directory
+              --to    %LOCALAPPDATA%\AppLedger
+
+            Examples:
+              appledger install --from artifacts\release\appledger-win-x64 --add-path
+              appledger install --to "$env:LOCALAPPDATA\AppLedger"
+            """);
+            return 0;
+        }
+
+        var source = Cli.GetOption(args, "--from");
+        var target = Cli.GetOption(args, "--to");
+        var addPath = Cli.HasFlag(args, "--add-path");
+        var result = Diagnostics.Install(source, target, addPath);
+
+        Console.WriteLine("AppLedger install");
+        Console.WriteLine($"  Source:     {result.SourceDirectory}");
+        Console.WriteLine($"  Target:     {result.TargetDirectory}");
+
+        if (result.AlreadyInstalled)
+        {
+            Console.WriteLine("  Status:     already running from target directory");
+        }
+        else
+        {
+            Console.WriteLine($"  Copied:     {result.CopiedFiles:N0} file(s)");
+        }
+
+        Console.WriteLine($"  User PATH:  {(addPath ? result.PathUpdated ? "updated" : "already contained target" : "unchanged")}");
+        Console.WriteLine();
+        Console.WriteLine("Run `appledger doctor` from a new terminal to verify PATH resolution.");
+        return 0;
     }
 
     private static async Task<int> RecordAsync(string[] args)
@@ -595,6 +659,9 @@ internal static class Program
         AppLedger - a black box recorder for Windows apps.
 
         Usage:
+          appledger version
+          appledger doctor
+          appledger install [--from <release-dir>] [--to <install-dir>] [--add-path]
           appledger apps [search]
           appledger apps --running [search]
           appledger ps [search]
@@ -606,6 +673,9 @@ internal static class Program
           appledger diff <before.json> <after.json>
 
         Examples:
+          appledger version
+          appledger doctor
+          appledger install --from artifacts\release\appledger-win-x64 --add-path
           appledger apps code
           appledger apps --running codex
           appledger record codex --watch .

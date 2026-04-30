@@ -11,6 +11,8 @@ The product angle is not "ProcMon clone." ProcMon shows events. AppLedger explai
 Current Phase 1 capabilities:
 
 - record with a friendly default command: `record <app|process> --watch .`
+- inspect build/install identity with `version`, `--version`, and `doctor`
+- install or update a release folder with `install --from <release-dir> --add-path`
 - record a launched app with `run`
 - attach to an already-running app with `attach`
 - open `report.html` automatically after `record`, `run`, or `attach`
@@ -156,20 +158,15 @@ For normal use, install the release zip instead of running through `dotnet`.
 From a GitHub release:
 
 ```powershell
-$installDir = "$env:LOCALAPPDATA\AppLedger"
-New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-Expand-Archive .\appledger-win-x64.zip -DestinationPath $installDir -Force
-
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if ($userPath -notlike "*$installDir*") {
-  [Environment]::SetEnvironmentVariable("Path", "$userPath;$installDir", "User")
-}
+Expand-Archive .\appledger-win-x64.zip -DestinationPath .\appledger-win-x64 -Force
+.\appledger-win-x64\appledger.exe install --from .\appledger-win-x64 --add-path
 ```
 
 Open a new elevated PowerShell, then verify:
 
 ```powershell
-appledger --help
+appledger version
+appledger doctor
 appledger apps --running codex
 ```
 
@@ -186,7 +183,8 @@ Release packages are built as self-contained Windows x64 packages with a single 
 To build the same package locally:
 
 ```powershell
-.\scripts\publish-release.ps1 -Runtime win-x64 -Version 0.1.0
+.\scripts\publish-release.ps1 -Runtime win-x64 -Version 0.1.3
+.\artifacts\release\appledger-win-x64\appledger.exe install --from .\artifacts\release\appledger-win-x64 --add-path
 ```
 
 Generated release files:
@@ -289,6 +287,9 @@ dotnet test AppLedger.slnx
 appledger apps [search]
 appledger apps --running [search]
 appledger ps [search]
+appledger version
+appledger doctor
+appledger install [--from <release-dir>] [--to <install-dir>] [--add-path]
 appledger record <app|process search|pid> [--profile ai-code|codex|claude|cursor|vscode|none] [--watch <path>] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-open] [--out <dir>] [--timeout <seconds>]
 appledger run <app name|alias|exe> [--args "<arguments>"] [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--no-open] [--out <dir>] [--timeout <seconds>]
 appledger attach <pid|process search> [--profile <name>] [--watch <path>] [--watch-all] [--include <path-or-pattern>] [--exclude <path-or-pattern>] [--no-reads] [--max-events <n>] [--no-sqlite] [--no-open] [--out <dir>] [--timeout <seconds>]
@@ -305,6 +306,9 @@ appledger record claude --watch .
 appledger record cursor --watch .
 appledger record code --watch .
 appledger record codex --watch . --no-open
+appledger version
+appledger doctor
+appledger install --from artifacts\release\appledger-win-x64 --add-path
 appledger apps --running codex
 appledger attach codex --profile ai-code
 appledger record codex --watch . --exclude node_modules --exclude .git\objects
@@ -407,6 +411,7 @@ Recent Phase 1 progress:
 - cleanup guidance section with likely-safe temp/cache candidates and review-only app-data candidates
 - app-specific AI profiles for Codex, Claude, Cursor, and VS Code
 - automatic report opening with `--no-open` for scripted runs
+- version, install, and doctor diagnostics for catching stale PATH installs, missing native ETW files, non-elevated sessions, and local release drift
 - report wording now distinguishes project/user file changes from raw watched-root, app-state, cache/temp, and runtime activity
 - Codex profile tuning from real sessions now filters `.codex` state, SQLite `etilqs_*` temp files, encoded shell bootstrap commands, and internal git introspection from the main AI activity story
 - process identity fields added to JSON, CSV, SQLite, and HTML report views for file/network attribution

@@ -48,6 +48,7 @@ Current Phase 1 capabilities:
 - attach process identity snapshots to file and network events for stronger attribution
 - show attribution confidence and reason for file/network events
 - reject stale process-tree members when Windows reuses a PID, so unrelated apps are less likely to be pulled into a session
+- suppress known Codex internal encoded-PowerShell parser and GitHub metadata probe noise from risk findings while keeping raw process/network rows visible
 - keep the CLI implementation split by collector, filesystem, analysis, output, and report responsibilities
 - persist sessions as JSON and SQLite
 - regenerate reports from `session.json` or `session.sqlite`
@@ -151,7 +152,7 @@ Profiles bundle those flags for normal use. The `record` command infers these pr
 When a profile disables a category, the report labels it as disabled. For example, `ai-code` reports file reads as `Off` / `file reads disabled` instead of implying AppLedger observed zero reads.
 Active include/exclude filters are also shown in the report capture settings.
 
-The Codex profile has been tuned against real desktop recordings. It filters repeated low-signal churn from Codex state, SQLite temp files, PowerShell startup/profile probes, .NET telemetry/NuGet/MSBuild temp files, build outputs, and internal git introspection while keeping user-facing project changes, explicit developer commands, network endpoints, and persistence findings visible.
+The Codex profile has been tuned against real desktop recordings. It filters repeated low-signal churn from Codex state, SQLite temp files, PowerShell startup/profile probes, .NET telemetry/NuGet/MSBuild temp files, build outputs, internal git introspection, Codex's internal encoded-PowerShell parser, and GitHub metadata probe findings while keeping user-facing project changes, explicit developer commands, raw network endpoints, and persistence findings visible.
 
 ## Install
 

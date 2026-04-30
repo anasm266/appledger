@@ -352,6 +352,53 @@ public sealed class NormalizationTests
     }
 
     [Fact]
+    public void Analyzer_IgnoresCodexInternalEncodedPowerShellParser()
+    {
+        var processes = new List<ProcessRecord>
+        {
+            new(100, 1, "Codex.exe", @"C:\Program Files\WindowsApps\OpenAI.Codex_1.0.0.0_x64__abc\app\Codex.exe", "Codex.exe", At(52), At(52), At(60)),
+            new(101, 100, "codex.exe", @"C:\Program Files\WindowsApps\OpenAI.Codex_1.0.0.0_x64__abc\app\resources\codex.exe", "codex", At(53), At(53), At(60)),
+            new(102, 101, "powershell.exe", @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", @"""C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"" -NoLogo -NoProfile -NonInteractive -EncodedCommand SQBFAFgA", At(54), At(54), At(60))
+        };
+
+        var findings = Analyzer.Find([], watchAll: true, [], processes, [], [], []);
+
+        Assert.DoesNotContain(findings, finding => finding.Title == "Encoded PowerShell command");
+    }
+
+    [Fact]
+    public void Analyzer_StillFlagsNonCodexEncodedPowerShell()
+    {
+        var processes = new List<ProcessRecord>
+        {
+            new(200, 1, "powershell.exe", @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", @"powershell.exe -NoProfile -EncodedCommand SQBFAFgA", At(54), At(54), At(55))
+        };
+
+        var findings = Analyzer.Find([], watchAll: true, [], processes, [], [], []);
+
+        Assert.Contains(findings, finding => finding.Severity == "info" && finding.Title == "Encoded PowerShell command");
+    }
+
+    [Fact]
+    public void Analyzer_IgnoresCodexInternalGitRemoteHttpsNetworkProbe()
+    {
+        var processes = new List<ProcessRecord>
+        {
+            new(300, 1, "Codex.exe", @"C:\Program Files\WindowsApps\OpenAI.Codex_1.0.0.0_x64__abc\app\Codex.exe", "Codex.exe", At(52), At(52), At(60)),
+            new(301, 300, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git remote show origin", At(53), At(53), At(54)),
+            new(302, 301, "git-remote-https.exe", @"C:\Program Files\Git\mingw64\libexec\git-core\git-remote-https.exe", "git-remote-https origin https://github.com/anasm266/appledger.git", At(53), At(53), At(54))
+        };
+        var network = new List<NetworkEvent>
+        {
+            new(302, "127.0.0.1", 12000, "140.82.112.4", 443, "Established", At(54), "github.com")
+        };
+
+        var findings = Analyzer.Find([], watchAll: true, [], processes, network, [], []);
+
+        Assert.DoesNotContain(findings, finding => finding.Title == "External network destinations");
+    }
+
+    [Fact]
     public void Analyzer_FindsHighSignalAiSessionRisks()
     {
         var watchRoot = @"C:\Users\Anas\Documents\repo";

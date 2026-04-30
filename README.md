@@ -415,7 +415,7 @@ Recent Phase 1 progress:
 - automatic report opening with `--no-open` for scripted runs
 - version, install, and doctor diagnostics for catching stale PATH installs, missing native ETW files, non-elevated sessions, and local release drift
 - report wording now distinguishes project/user file changes from raw watched-root, app-state, cache/temp, and runtime activity
-- Codex profile tuning from real sessions now filters `.codex` state, SQLite `etilqs_*` temp files, encoded shell bootstrap commands, and internal git introspection from the main AI activity story
+- Codex profile tuning from real sessions now filters `.codex` state, SQLite `etilqs_*` temp files, encoded shell bootstrap commands, blank helper git processes, branch/status probes, and internal git introspection from the main AI activity story
 - process identity fields added to JSON, CSV, SQLite, and HTML report views for file/network attribution
 - attribution confidence summary added to the HTML report
 - process-tree membership now prunes stale reused PIDs before syncing ETW/network filters

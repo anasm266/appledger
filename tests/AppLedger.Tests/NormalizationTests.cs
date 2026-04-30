@@ -312,8 +312,11 @@ public sealed class NormalizationTests
             new(503, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git rev-parse --git-dir", At(52), At(52), At(53)),
             new(504, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git remote show origin", At(53), At(53), At(54)),
             new(505, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git rev-parse --git-path codex-shell-environment.json", At(54), At(54), At(55)),
-            new(506, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git status --short", At(55), At(55), At(56)),
-            new(507, 1, "npm.cmd", @"C:\Program Files\nodejs\npm.cmd", "npm test", At(56), At(56), At(57))
+            new(506, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git.exe config --file .gitmodules --get-regexp path", At(55), At(55), At(56)),
+            new(507, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git for-each-ref --count=100 --sort=-committerdate refs/heads --format=%(refname:short)", At(56), At(56), At(57)),
+            new(508, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "", At(57), At(57), At(58)),
+            new(509, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git status --short", At(58), At(58), At(59)),
+            new(510, 1, "npm.cmd", @"C:\Program Files\nodejs\npm.cmd", "npm test", At(59), At(59), At(60))
         };
 
         var ai = AiCodingAnalyzer.Build([], [], processes);
@@ -322,9 +325,11 @@ public sealed class NormalizationTests
         Assert.Equal(1, ai.Commands.GitCommands);
         Assert.Equal(1, ai.Commands.TestCommands);
         Assert.DoesNotContain(ai.DeveloperCommands, command => command.CommandLine.Contains("rev-list", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(ai.DeveloperCommands, command => command.CommandLine.Contains("for-each-ref", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(ai.DeveloperCommands, command => command.CommandLine.Contains("git status", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(ai.ProcessTimeline, process => process.CommandLine?.Contains("rev-parse", StringComparison.OrdinalIgnoreCase) == true);
         Assert.DoesNotContain(ai.ProcessTimeline, process => process.CommandLine?.Contains("porcelain", StringComparison.OrdinalIgnoreCase) == true);
+        Assert.DoesNotContain(ai.ProcessTimeline, process => string.IsNullOrWhiteSpace(process.CommandLine) && process.Name.Contains("git", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(ai.ProcessTimeline, process => process.CommandLine?.Contains("git status --short", StringComparison.OrdinalIgnoreCase) == true);
     }
 

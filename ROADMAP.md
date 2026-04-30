@@ -36,6 +36,7 @@ Implemented:
 - grouped network summary by destination and process
 - source split out of the original single-file implementation into CLI, collection, filesystem, analysis, model, output, registry, and report modules
 - friendly `record` command and `ai-code` capture profile added
+- `version`, `--version`, `doctor`, and `install` diagnostics added for release/install identity
 - process-name recording now prefers the root of a matching process tree instead of an arbitrary child process
 - running-app selection now groups Electron/helper processes under the best app root and deprioritizes AppLedger's own command line
 - startup `Run` / `RunOnce` registry monitoring
@@ -89,6 +90,7 @@ Recent Phase 1 fixes:
 - service start/type labels and scheduled task trigger/condition summaries added
 - release packaging added with `appledger-win-x64.zip`, native ETW support files, and SHA256 output
 - GitHub release workflow added for tag-triggered release asset upload
+- version/install/doctor commands added so stale PATH installs and missing native ETW support files are visible
 - cleanup guidance added to reports and cleanup.ps1
 - running app picker added for friendlier `record codex --watch .` style workflows
 - app-specific AI profiles added on top of the generic `ai-code` defaults

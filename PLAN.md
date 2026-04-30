@@ -42,6 +42,7 @@ Working now:
 - readable service start/type labels and concise scheduled task trigger/condition summaries
 - self-contained `win-x64` release packaging with native ETW support files
 - GitHub Actions workflow for release zips and SHA256 artifacts
+- version/install/doctor diagnostics for release identity, PATH resolution, native ETW files, and elevation state
 - conservative cleanup guidance in HTML and `cleanup.ps1`
 - active process-tree membership guarded against PID reuse before ETW/network sync
 - HTML / JSON / CSV / SQLite outputs
@@ -100,6 +101,7 @@ Built:
 
 Next:
 
+- run the new `doctor` command against future release zips before tagging
 - tune Claude/Cursor/VS Code profile filters from longer real sessions
 - consider a persistence-specific SQLite table if querying by persistence type becomes useful
 - add more runtime targets only if users ask for non-x64 Windows packages

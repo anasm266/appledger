@@ -219,6 +219,8 @@ internal static class Analyzer
         var normalized = path.Replace('/', '\\');
         return PathClassifier.IsSystemRuntimeNoise(path)
             || IsUserProfileRoot(normalized)
+            || IsDotNetRuntimeNoise(normalized)
+            || IsPowerShellRuntimeNoise(normalized)
             || normalized.Contains("\\.git\\", StringComparison.OrdinalIgnoreCase)
             || IsCodexStatePath(normalized)
             || normalized.Contains("\\node_modules\\", StringComparison.OrdinalIgnoreCase)
@@ -236,6 +238,17 @@ internal static class Analyzer
     private static bool IsCodexStatePath(string normalizedPath) =>
         normalizedPath.Contains("\\.codex\\", StringComparison.OrdinalIgnoreCase)
         || normalizedPath.EndsWith("\\.codex", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsDotNetRuntimeNoise(string normalizedPath) =>
+        normalizedPath.Contains("\\.dotnet\\TelemetryStorageService\\", StringComparison.OrdinalIgnoreCase)
+        || normalizedPath.Contains("\\NuGet\\v3-cache\\", StringComparison.OrdinalIgnoreCase)
+        || normalizedPath.Contains("\\MSBuildTemp", StringComparison.OrdinalIgnoreCase)
+        || normalizedPath.Contains("\\CASESENSITIVETEST", StringComparison.OrdinalIgnoreCase)
+        || normalizedPath.Contains("\\Microsoft.NET.Workload_", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsPowerShellRuntimeNoise(string normalizedPath) =>
+        normalizedPath.Contains("\\StartupProfileData-NonInteractive", StringComparison.OrdinalIgnoreCase)
+        || normalizedPath.Contains("\\__PSScriptPolicyTest_", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsExternalAddress(string address)
     {
@@ -393,6 +406,7 @@ internal static class AiCodingAnalyzer
             .ToList();
 
         var processGroups = processes
+            .Where(IsTimelineProcess)
             .GroupBy(process => NormalizeProcessName(process.Name), StringComparer.OrdinalIgnoreCase)
             .Select(group => new ProcessGroupSummary(
                 group.Key,
@@ -451,7 +465,7 @@ internal static class AiCodingAnalyzer
 
         if (PathClassifier.IsUnderAnyWatchRoot(path, watchRoots))
         {
-            return true;
+            return LooksLikeProjectFile(fileName);
         }
 
         if (!IsUserFacingCodingLocation(path))
@@ -469,7 +483,9 @@ internal static class AiCodingAnalyzer
         || fileName.EndsWith(".cache", StringComparison.OrdinalIgnoreCase)
         || fileName.EndsWith(".sqlite", StringComparison.OrdinalIgnoreCase)
         || fileName.EndsWith(".sqlite-wal", StringComparison.OrdinalIgnoreCase)
-        || fileName.EndsWith(".sqlite-shm", StringComparison.OrdinalIgnoreCase);
+        || fileName.EndsWith(".sqlite-shm", StringComparison.OrdinalIgnoreCase)
+        || fileName.StartsWith("temp-", StringComparison.OrdinalIgnoreCase)
+        || fileName.StartsWith("scratch-", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsCodexStatePath(string normalizedPath) =>
         normalizedPath.Contains("\\.codex\\", StringComparison.OrdinalIgnoreCase)
@@ -502,7 +518,12 @@ internal static class AiCodingAnalyzer
             ".env.example",
             ".env.local",
             "Dockerfile",
-            "Makefile"
+            "Makefile",
+            "LICENSE",
+            ".gitignore",
+            ".dockerignore",
+            ".editorconfig",
+            ".gitattributes"
         ];
 
         if (knownProjectFiles.Contains(fileName, StringComparer.OrdinalIgnoreCase))
@@ -535,6 +556,7 @@ internal static class AiCodingAnalyzer
             ".swift",
             ".json",
             ".md",
+            ".txt",
             ".yml",
             ".yaml",
             ".toml",
@@ -662,14 +684,18 @@ internal static class AiCodingAnalyzer
     {
         var normalized = CommandFingerprint(command);
         return normalized.Contains("git rev-parse --abbrev-ref", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("git rev-parse HEAD", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git rev-list --count", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git rev-parse --verify --quiet", StringComparison.OrdinalIgnoreCase)
             || normalized.Equals("git status --porcelain=v1 -z", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("git status --porcelain", StringComparison.OrdinalIgnoreCase)
             || normalized.Equals("git rev-parse --git-dir", StringComparison.OrdinalIgnoreCase)
             || normalized.Equals("git remote", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("git remote -v", StringComparison.OrdinalIgnoreCase)
             || normalized.Equals("git remote show origin", StringComparison.OrdinalIgnoreCase)
             || normalized.Equals("git rev-parse --show-toplevel", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git rev-parse --git-path codex-shell-environment.json", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("git config --file .gitmodules --get-regexp path", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git for-each-ref --format=%(upstream:short)", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git merge-base", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git symbolic-ref", StringComparison.OrdinalIgnoreCase);
@@ -678,7 +704,7 @@ internal static class AiCodingAnalyzer
     private static bool IsTimelineProcess(ProcessRecord process)
     {
         var name = NormalizeProcessName(process.Name);
-        if (name is "conhost" or "git-credential-manager" or "git-remote-https")
+        if (name is "conhost" or "git-credential-manager" or "git-remote-https" or "tzutil")
         {
             return false;
         }
@@ -689,6 +715,8 @@ internal static class AiCodingAnalyzer
             || command.Contains("git remote-https", StringComparison.OrdinalIgnoreCase)
             || command.Contains("Win32_Process | Select-Object", StringComparison.OrdinalIgnoreCase)
             || command.Contains("-EncodedCommand", StringComparison.OrdinalIgnoreCase)
+            || CommandFingerprint(command).Equals("gh --version", StringComparison.OrdinalIgnoreCase)
+            || CommandFingerprint(command).Equals("gh auth status", StringComparison.OrdinalIgnoreCase)
             || IsGitIntrospectionCommand(command))
         {
             return false;

@@ -205,7 +205,16 @@ internal sealed record RecordingProfile(
         "ShaderCache",
         "GrShaderCache",
         "Crashpad",
-        "etilqs_*"
+        "etilqs_*",
+        "__PSScriptPolicyTest_*",
+        "StartupProfileData-NonInteractive",
+        ".dotnet\\TelemetryStorageService",
+        "NuGet\\v3-cache",
+        "MSBuildTemp*",
+        "CASESENSITIVETEST*",
+        "Microsoft.NET.Workload_*",
+        "bin",
+        "obj"
     ];
 
     public static readonly RecordingProfile None = new(

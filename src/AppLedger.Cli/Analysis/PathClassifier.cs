@@ -60,6 +60,7 @@ internal static class PathClassifier
             || normalized.Contains("\\assembly\\NativeImages_", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("\\AppData\\Local\\Microsoft\\CLR_v4.0\\", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("\\AppData\\Local\\Temp\\etilqs_", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("\\.dotnet\\sdk-advertising\\", StringComparison.OrdinalIgnoreCase)
             || (IsUnder(normalized, CommonApplicationData) && normalized.Contains("\\Microsoft\\NetFramework\\", StringComparison.OrdinalIgnoreCase));
     }
 

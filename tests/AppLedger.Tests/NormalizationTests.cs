@@ -39,6 +39,7 @@ public sealed class NormalizationTests
         Assert.Contains("__PSScriptPolicyTest_*", options.PathFilter.Excludes);
         Assert.Contains("StartupProfileData-NonInteractive", options.PathFilter.Excludes);
         Assert.Contains(".dotnet\\TelemetryStorageService", options.PathFilter.Excludes);
+        Assert.Contains(".dotnet\\sdk-advertising", options.PathFilter.Excludes);
         Assert.Contains("NuGet\\v3-cache", options.PathFilter.Excludes);
         Assert.Contains("MSBuildTemp*", options.PathFilter.Excludes);
         Assert.Contains("bin", options.PathFilter.Excludes);
@@ -272,7 +273,8 @@ public sealed class NormalizationTests
             Live(FileEventKind.Created, Path.Combine(demoRoot, ".env.example"), observedAt: At(46), processId: 400, processName: "codex.exe"),
             Live(FileEventKind.Deleted, Path.Combine(demoRoot, "temp-notes.txt"), observedAt: At(47), processId: 400, processName: "codex.exe"),
             Live(FileEventKind.Modified, @"C:\Users\Anas\AppData\Local\Temp\etilqs_noise", observedAt: At(48), processId: 400, processName: "codex.exe"),
-            Live(FileEventKind.Modified, @"C:\Users\Anas\.codex\models_cache.json", observedAt: At(49), processId: 400, processName: "codex.exe")
+            Live(FileEventKind.Modified, @"C:\Users\Anas\.codex\models_cache.json", observedAt: At(49), processId: 400, processName: "codex.exe"),
+            Live(FileEventKind.Created, @"C:\Users\Anas\.dotnet\sdk-advertising\10.0.200\microsoft.net.workloads\workloadVersion.txt", observedAt: At(50), processId: 401, processName: "dotnet.exe")
         ]);
 
         var ai = AiCodingAnalyzer.Build([watchRoot], files, []);
@@ -282,6 +284,7 @@ public sealed class NormalizationTests
         Assert.Contains(ai.ChangedProjectFiles, file => file.RelativePath.EndsWith(@".env.example", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(ai.ChangedProjectFiles, file => file.Path.Contains("etilqs", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(ai.ChangedProjectFiles, file => file.Path.Contains(@"\.codex\", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(ai.ChangedProjectFiles, file => file.Path.Contains(@"\.dotnet\", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -316,7 +319,9 @@ public sealed class NormalizationTests
             new(507, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git for-each-ref --count=100 --sort=-committerdate refs/heads --format=%(refname:short)", At(56), At(56), At(57)),
             new(508, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "", At(57), At(57), At(58)),
             new(509, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git status --short", At(58), At(58), At(59)),
-            new(510, 1, "npm.cmd", @"C:\Program Files\nodejs\npm.cmd", "npm test", At(59), At(59), At(60))
+            new(510, 1, "npm.cmd", @"C:\Program Files\nodejs\npm.cmd", "npm test", At(59), At(59), At(60)),
+            new(511, 1, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git config --get remote.upstream.url", At(60), At(60), At(61)),
+            new(512, 1, "gh.exe", @"C:\Program Files\GitHub CLI\gh.exe", "gh pr list --head main --author @me --state all --json number,url,state --repo anasm266/appledger", At(61), At(61), At(62))
         };
 
         var ai = AiCodingAnalyzer.Build([], [], processes);
@@ -326,6 +331,8 @@ public sealed class NormalizationTests
         Assert.Equal(1, ai.Commands.TestCommands);
         Assert.DoesNotContain(ai.DeveloperCommands, command => command.CommandLine.Contains("rev-list", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(ai.DeveloperCommands, command => command.CommandLine.Contains("for-each-ref", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(ai.DeveloperCommands, command => command.CommandLine.Contains("remote.upstream.url", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(ai.DeveloperCommands, command => command.CommandLine.Contains("gh pr list", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(ai.DeveloperCommands, command => command.CommandLine.Contains("git status", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(ai.ProcessTimeline, process => process.CommandLine?.Contains("rev-parse", StringComparison.OrdinalIgnoreCase) == true);
         Assert.DoesNotContain(ai.ProcessTimeline, process => process.CommandLine?.Contains("porcelain", StringComparison.OrdinalIgnoreCase) == true);
@@ -386,11 +393,18 @@ public sealed class NormalizationTests
         {
             new(300, 1, "Codex.exe", @"C:\Program Files\WindowsApps\OpenAI.Codex_1.0.0.0_x64__abc\app\Codex.exe", "Codex.exe", At(52), At(52), At(60)),
             new(301, 300, "git.exe", @"C:\Program Files\Git\cmd\git.exe", "git remote show origin", At(53), At(53), At(54)),
-            new(302, 301, "git-remote-https.exe", @"C:\Program Files\Git\mingw64\libexec\git-core\git-remote-https.exe", "git-remote-https origin https://github.com/anasm266/appledger.git", At(53), At(53), At(54))
+            new(302, 301, "git-remote-https.exe", @"C:\Program Files\Git\mingw64\libexec\git-core\git-remote-https.exe", "git-remote-https origin https://github.com/anasm266/appledger.git", At(53), At(53), At(54)),
+            new(303, 300, "gh.exe", @"C:\Program Files\GitHub CLI\gh.exe", "gh auth status", At(54), At(54), At(55)),
+            new(304, 300, "gh.exe", @"C:\Program Files\GitHub CLI\gh.exe", "gh pr list --head main --author @me --state all --json number,url,state --repo anasm266/appledger", At(55), At(55), At(56)),
+            new(305, 300, "powershell.exe", @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", @"powershell -Command dotnet test AppLedger.slnx", At(56), At(56), At(57)),
+            new(306, 305, "dotnet.exe", @"C:\Program Files\dotnet\dotnet.exe", @"""C:\Program Files\dotnet\dotnet.exe"" test AppLedger.slnx", At(57), At(57), At(58))
         };
         var network = new List<NetworkEvent>
         {
-            new(302, "127.0.0.1", 12000, "140.82.112.4", 443, "Established", At(54), "github.com")
+            new(302, "127.0.0.1", 12000, "140.82.112.4", 443, "Established", At(54), "github.com"),
+            new(303, "127.0.0.1", 12001, "140.82.114.5", 443, "Established", At(55), "api.github.com"),
+            new(304, "127.0.0.1", 12002, "140.82.114.5", 443, "Established", At(56), "api.github.com"),
+            new(306, "127.0.0.1", 12003, "20.9.155.152", 443, "Established", At(58), null)
         };
 
         var findings = Analyzer.Find([], watchAll: true, [], processes, network, [], []);
@@ -439,6 +453,7 @@ public sealed class NormalizationTests
         var watchRoot = @"C:\Users\Anas\Documents\repo";
         var files = FileEventMerger.NormalizeForSession([
             Live(FileEventKind.Created, @"C:\Users\Anas\.dotnet\TelemetryStorageService\telemetry.trn", observedAt: At(56), processId: 100, processName: "dotnet.exe"),
+            Live(FileEventKind.Created, @"C:\Users\Anas\.dotnet\sdk-advertising\10.0.200\microsoft.net.workloads\workloadVersion.txt", observedAt: At(56), processId: 100, processName: "dotnet.exe"),
             Live(FileEventKind.Modified, @"C:\Users\Anas\AppData\Local\Microsoft\Windows\PowerShell\StartupProfileData-NonInteractive", observedAt: At(57), processId: 101, processName: "powershell.exe"),
             Live(FileEventKind.Created, @"C:\Users\Anas\AppData\Local\Temp\__PSScriptPolicyTest_abc.ps1", observedAt: At(58), processId: 101, processName: "powershell.exe")
         ]);

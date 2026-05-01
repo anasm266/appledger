@@ -56,7 +56,7 @@ Current Phase 1 capabilities:
 - normalize rename targets in regenerated reports and display renames as `old -> new`
 - group `.git` internals and runtime bookkeeping out of the main report tables
 - control large sessions with `--no-reads`, `--max-events <n>`, and `--no-sqlite`
-- keep noisy defaults out of AI sessions, including `node_modules`, `bin`, `obj`, `.git\objects`, `.git\logs`, AppLedger output folders, SQLite temp churn, PowerShell policy/startup probes, .NET telemetry/build caches, Codex state, common cache folders, and app-specific cache/log folders
+- keep noisy defaults out of AI sessions, including `node_modules`, `bin`, `obj`, `.git\objects`, `.git\logs`, AppLedger output folders, SQLite temp churn, PowerShell policy/startup probes, .NET telemetry/build/workload-advertising caches, Codex state, common cache folders, and app-specific cache/log folders
 - cover normalization and summary logic with unit tests
 
 Generated artifacts:
@@ -152,7 +152,7 @@ Profiles bundle those flags for normal use. The `record` command infers these pr
 When a profile disables a category, the report labels it as disabled. For example, `ai-code` reports file reads as `Off` / `file reads disabled` instead of implying AppLedger observed zero reads.
 Active include/exclude filters are also shown in the report capture settings.
 
-The Codex profile has been tuned against real desktop recordings. It filters repeated low-signal churn from Codex state, SQLite temp files, PowerShell startup/profile probes, .NET telemetry/NuGet/MSBuild temp files, build outputs, internal git introspection, Codex's internal encoded-PowerShell parser, and GitHub metadata probe findings while keeping user-facing project changes, explicit developer commands, raw network endpoints, and persistence findings visible.
+The Codex profile has been tuned against real desktop recordings. It filters repeated low-signal churn from Codex state, SQLite temp files, PowerShell startup/profile probes, .NET telemetry/NuGet/MSBuild/workload-advertising temp files, build outputs, internal git introspection, Codex's internal encoded-PowerShell parser, GitHub CLI metadata probes, and GitHub metadata probe findings while keeping user-facing project changes, explicit developer commands, raw network endpoints, and persistence findings visible.
 
 ## Install
 

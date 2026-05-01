@@ -209,6 +209,7 @@ internal sealed record RecordingProfile(
         "__PSScriptPolicyTest_*",
         "StartupProfileData-NonInteractive",
         ".dotnet\\TelemetryStorageService",
+        ".dotnet\\sdk-advertising",
         "NuGet\\v3-cache",
         "MSBuildTemp*",
         "CASESENSITIVETEST*",

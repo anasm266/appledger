@@ -219,14 +219,15 @@ internal static class Analyzer
 
     private static bool IsLowSignalNetworkProbe(NetworkEvent item, IReadOnlyDictionary<int, ProcessRecord> processesByPid)
     {
-        if (!IsGithubHost(NetworkResolver.DisplayHost(item))
-            || !processesByPid.TryGetValue(item.ProcessId, out var process)
-            || !IsGitRemoteHttpsProcess(process))
+        if (!processesByPid.TryGetValue(item.ProcessId, out var process) || !HasCodexAncestor(process, processesByPid))
         {
             return false;
         }
 
-        return HasCodexAncestor(process, processesByPid);
+        var host = NetworkResolver.DisplayHost(item);
+        return IsGithubCliMetadataProbe(process)
+            || IsDotNetSdkNetworkProbe(process)
+            || (IsGithubHost(host) && IsGitRemoteHttpsProcess(process));
     }
 
     private static bool IsGithubHost(string host) =>
@@ -239,6 +240,53 @@ internal static class Analyzer
         return name.Equals("git-remote-https", StringComparison.OrdinalIgnoreCase)
             || process.ExecutablePath?.Contains("\\git-remote-https.exe", StringComparison.OrdinalIgnoreCase) == true
             || process.CommandLine?.Contains("git-remote-https", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private static bool IsGithubCliMetadataProbe(ProcessRecord process)
+    {
+        var name = Path.GetFileNameWithoutExtension(process.Name);
+        if (!name.Equals("gh", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var command = NormalizeCommand(process.CommandLine);
+        return command.Equals("gh auth status", StringComparison.OrdinalIgnoreCase)
+            || (command.StartsWith("gh pr list --head ", StringComparison.OrdinalIgnoreCase)
+                && command.Contains(" --author @me ", StringComparison.OrdinalIgnoreCase)
+                && command.Contains(" --json number,url,state", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsDotNetSdkNetworkProbe(ProcessRecord process)
+    {
+        var name = Path.GetFileNameWithoutExtension(process.Name);
+        if (!name.Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var command = NormalizeCommand(process.CommandLine);
+        return command.Contains(" dotnet test ", StringComparison.OrdinalIgnoreCase)
+            || command.StartsWith("dotnet test ", StringComparison.OrdinalIgnoreCase)
+            || command.Contains("dotnet.exe test ", StringComparison.OrdinalIgnoreCase)
+            || command.Contains(" MSBuild.dll ", StringComparison.OrdinalIgnoreCase)
+            || command.Contains(" nuget verify ", StringComparison.OrdinalIgnoreCase)
+            || command.Contains(" microsoft.net.workloads.", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeCommand(string? commandLine)
+    {
+        if (string.IsNullOrWhiteSpace(commandLine))
+        {
+            return string.Empty;
+        }
+
+        var normalized = commandLine
+            .Replace("\"", "", StringComparison.Ordinal)
+            .Replace("C:\\Program Files\\dotnet\\dotnet.exe", "dotnet", StringComparison.OrdinalIgnoreCase)
+            .Replace("C:\\Program Files\\GitHub CLI\\gh.exe", "gh", StringComparison.OrdinalIgnoreCase);
+
+        return string.Join(" ", normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
     }
 
     private static bool HasCodexAncestor(ProcessRecord process, IReadOnlyDictionary<int, ProcessRecord> processesByPid)
@@ -333,6 +381,7 @@ internal static class Analyzer
 
     private static bool IsDotNetRuntimeNoise(string normalizedPath) =>
         normalizedPath.Contains("\\.dotnet\\TelemetryStorageService\\", StringComparison.OrdinalIgnoreCase)
+        || normalizedPath.Contains("\\.dotnet\\sdk-advertising\\", StringComparison.OrdinalIgnoreCase)
         || normalizedPath.Contains("\\NuGet\\v3-cache\\", StringComparison.OrdinalIgnoreCase)
         || normalizedPath.Contains("\\MSBuildTemp", StringComparison.OrdinalIgnoreCase)
         || normalizedPath.Contains("\\CASESENSITIVETEST", StringComparison.OrdinalIgnoreCase)
@@ -416,6 +465,7 @@ internal static class AiCodingAnalyzer
     [
         "\\node_modules\\",
         "\\.git\\",
+        "\\.dotnet\\",
         "\\bin\\",
         "\\obj\\",
         "\\dist\\",
@@ -767,6 +817,7 @@ internal static class AiCodingAnalyzer
             || line.Contains("git-remote-https", StringComparison.OrdinalIgnoreCase)
             || line.Contains("git remote-https", StringComparison.OrdinalIgnoreCase)
             || line.Contains("-EncodedCommand", StringComparison.OrdinalIgnoreCase)
+            || IsGithubCliMetadataProbe(line)
             || IsGitIntrospectionCommand(line)
             || line.Contains("Win32_Process | Select-Object", StringComparison.OrdinalIgnoreCase)
             || line.Contains("Long-lived PowerShell AST parser", StringComparison.OrdinalIgnoreCase);
@@ -785,6 +836,7 @@ internal static class AiCodingAnalyzer
             || normalized.Equals("git remote", StringComparison.OrdinalIgnoreCase)
             || normalized.Equals("git remote -v", StringComparison.OrdinalIgnoreCase)
             || normalized.Equals("git remote show origin", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("git config --get remote.upstream.url", StringComparison.OrdinalIgnoreCase)
             || normalized.Equals("git rev-parse --show-toplevel", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git rev-parse --git-path codex-shell-environment.json", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git config --file .gitmodules --get-regexp path", StringComparison.OrdinalIgnoreCase)
@@ -792,6 +844,14 @@ internal static class AiCodingAnalyzer
             || normalized.Contains("git for-each-ref --format=%(upstream:short)", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git merge-base", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("git symbolic-ref", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsGithubCliMetadataProbe(string command)
+    {
+        var normalized = CommandFingerprint(command);
+        return normalized.StartsWith("gh pr list --head ", StringComparison.OrdinalIgnoreCase)
+            && normalized.Contains(" --author @me ", StringComparison.OrdinalIgnoreCase)
+            && normalized.Contains(" --json number,url,state", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsTimelineProcess(ProcessRecord process)
@@ -815,6 +875,7 @@ internal static class AiCodingAnalyzer
             || command.Contains("-EncodedCommand", StringComparison.OrdinalIgnoreCase)
             || CommandFingerprint(command).Equals("gh --version", StringComparison.OrdinalIgnoreCase)
             || CommandFingerprint(command).Equals("gh auth status", StringComparison.OrdinalIgnoreCase)
+            || IsGithubCliMetadataProbe(command)
             || IsGitIntrospectionCommand(command))
         {
             return false;

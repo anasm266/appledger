@@ -213,6 +213,20 @@ public sealed class NormalizationTests
     }
 
     [Fact]
+    public void NormalizeForSession_DropsImplausibleCrossDirectoryRenameTarget()
+    {
+        var staleSource = @"C:\Users\Anas\Documents\repo\src\AppLedger.Cli\obj\Debug\net8.0-windows\AppLedger.Cli.AssemblyInfoInputs.cache";
+        var unrelatedTarget = @"C:\Users\Anas\Documents\repo\profile-tuning-final-demo\src\draft.js";
+        var rename = Live(FileEventKind.Renamed, staleSource, observedAt: At(22), processId: 222, processName: "powershell.exe", relatedPath: unrelatedTarget);
+
+        var normalized = FileEventMerger.NormalizeForSession([rename]);
+
+        var renameResult = Assert.Single(normalized);
+        Assert.Equal(FileEventKind.Renamed, renameResult.Kind);
+        Assert.Null(renameResult.RelatedPath);
+    }
+
+    [Fact]
     public void Merge_PrefersLiveDeleteOverSnapshotDelete()
     {
         var path = @"C:\Users\Anas\Documents\repo\deleted.txt";
@@ -401,7 +415,7 @@ public sealed class NormalizationTests
         };
         var network = new List<NetworkEvent>
         {
-            new(302, "127.0.0.1", 12000, "140.82.112.4", 443, "Established", At(54), "github.com"),
+            new(302, "127.0.0.1", 12000, "140.82.112.4", 443, "Established", At(54), null),
             new(303, "127.0.0.1", 12001, "140.82.114.5", 443, "Established", At(55), "api.github.com"),
             new(304, "127.0.0.1", 12002, "140.82.114.5", 443, "Established", At(56), "api.github.com"),
             new(306, "127.0.0.1", 12003, "20.9.155.152", 443, "Established", At(58), null)

@@ -227,7 +227,7 @@ internal static class Analyzer
         var host = NetworkResolver.DisplayHost(item);
         return IsGithubCliMetadataProbe(process)
             || IsDotNetSdkNetworkProbe(process)
-            || (IsGithubHost(host) && IsGitRemoteHttpsProcess(process));
+            || IsGitRemoteHttpsProcess(process);
     }
 
     private static bool IsGithubHost(string host) =>

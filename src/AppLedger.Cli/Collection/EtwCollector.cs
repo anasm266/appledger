@@ -187,7 +187,11 @@ internal sealed class EtwCollector : IDisposable
             && !NormalizePath(pending.FromPath).Equals(NormalizePath(data.FileName), StringComparison.OrdinalIgnoreCase))
         {
             _pendingRenames.TryRemove(data.FileKey, out _);
-            AddFile(FileEventKind.Renamed, pending.FromPath, pending.ProcessId, pending.ProcessName, data.TimeStamp, data.FileName);
+            if (FileEventMerger.IsPlausibleRenamePair(pending.FromPath, data.FileName))
+            {
+                AddFile(FileEventKind.Renamed, pending.FromPath, pending.ProcessId, pending.ProcessName, data.TimeStamp, data.FileName);
+            }
+
             _knownFilePaths[data.FileKey] = data.FileName;
         }
     }
@@ -208,7 +212,11 @@ internal sealed class EtwCollector : IDisposable
             && _knownFilePaths.TryGetValue(data.FileKey, out var currentPath)
             && !NormalizePath(currentPath).Equals(NormalizePath(data.FileName), StringComparison.OrdinalIgnoreCase))
         {
-            AddFile(FileEventKind.Renamed, currentPath, data.ProcessID, data.ProcessName, data.TimeStamp, data.FileName);
+            if (FileEventMerger.IsPlausibleRenamePair(currentPath, data.FileName))
+            {
+                AddFile(FileEventKind.Renamed, currentPath, data.ProcessID, data.ProcessName, data.TimeStamp, data.FileName);
+            }
+
             _knownFilePaths[data.FileKey] = data.FileName;
             return;
         }

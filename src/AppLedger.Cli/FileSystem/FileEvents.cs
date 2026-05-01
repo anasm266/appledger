@@ -105,7 +105,13 @@ internal static class FileEventMerger
 
     public static List<FileEvent> NormalizeForSession(IReadOnlyList<FileEvent> events)
     {
-        var result = events.ToList();
+        var result = events
+            .Select(file => file.Kind == FileEventKind.Renamed
+                && !string.IsNullOrWhiteSpace(file.RelatedPath)
+                && !IsPlausibleRenamePair(file.Path, file.RelatedPath)
+                    ? file with { RelatedPath = null }
+                    : file)
+            .ToList();
         var snapshotCreates = result
             .Where(e => e.Kind == FileEventKind.Created && e.Source.Equals("snapshot", StringComparison.OrdinalIgnoreCase))
             .ToList();
@@ -179,6 +185,7 @@ internal static class FileEventMerger
                     || file.Source.Equals("normalized", StringComparison.OrdinalIgnoreCase))
                 .Where(file => !consumedCreatePaths.Contains(Normalize(file.Path)))
                 .Where(file => NormalizeDirectory(file.Path).Equals(sourceDirectory, StringComparison.OrdinalIgnoreCase))
+                .Where(file => IsPlausibleRenamePair(rename.Path, file.Path))
                 .Select(file => new { File = file, NameMatch = ShareNameStem(Path.GetFileNameWithoutExtension(rename.Path), Path.GetFileNameWithoutExtension(file.Path)), Score = ScoreRenameTarget(rename, file) })
                 .Where(item => item.Score > 0)
                 .ToList();
@@ -303,6 +310,9 @@ internal static class FileEventMerger
         var directory = Path.GetDirectoryName(path) ?? path;
         return Normalize(directory);
     }
+
+    internal static bool IsPlausibleRenamePair(string sourcePath, string targetPath) =>
+        NormalizeDirectory(sourcePath).Equals(NormalizeDirectory(targetPath), StringComparison.OrdinalIgnoreCase);
 
     private static string Normalize(string path) => Path.GetFullPath(path).TrimEnd('\\');
 }

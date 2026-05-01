@@ -98,6 +98,8 @@ Recent Phase 1 fixes:
 - automatic report opening added with `--no-open` escape hatch
 - report wording tightened for project/user changes, filtered AI profile noise, and known-byte totals
 - Codex profile tuned against real sessions: `.codex` state, SQLite `etilqs_*` churn, PowerShell policy/startup probes, .NET telemetry/build/workload-advertising cache churn, `bin`/`obj` outputs, Codex internal encoded-PowerShell parser findings, GitHub CLI/API metadata probe findings, directory-only project events, and internal git introspection no longer dominate the AI activity story
+- stale ETW file-key rename pairings are rejected when the source and target directories are unrelated
+- Codex-owned `git-remote-https` metadata probes are suppressed from risk findings even when DNS only leaves a raw GitHub IP
 
 Current proof point:
 

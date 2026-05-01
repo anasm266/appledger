@@ -45,6 +45,8 @@ Working now:
 - version/install/doctor diagnostics for release identity, PATH resolution, native ETW files, and elevation state
 - conservative cleanup guidance in HTML and `cleanup.ps1`
 - active process-tree membership guarded against PID reuse before ETW/network sync
+- stale ETW rename pairings guarded so unrelated source/target directories are not reported as one rename
+- Codex metadata network probes filtered from findings even when hostname resolution is incomplete
 - HTML / JSON / CSV / SQLite outputs
 - AI-oriented report sections
 - test project with passing normalization and summary fixtures

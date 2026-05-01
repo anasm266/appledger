@@ -48,12 +48,13 @@ Current Phase 1 capabilities:
 - attach process identity snapshots to file and network events for stronger attribution
 - show attribution confidence and reason for file/network events
 - reject stale process-tree members when Windows reuses a PID, so unrelated apps are less likely to be pulled into a session
-- suppress known Codex internal encoded-PowerShell parser and GitHub metadata probe noise from risk findings while keeping raw process/network rows visible
+- suppress known Codex internal encoded-PowerShell parser and GitHub metadata probe noise from risk findings, even when DNS is unresolved, while keeping raw process/network rows visible
 - keep the CLI implementation split by collector, filesystem, analysis, output, and report responsibilities
 - persist sessions as JSON and SQLite
 - regenerate reports from `session.json` or `session.sqlite`
 - generate AI-session sections for project file changes, developer commands, sensitive access, and process timeline
 - normalize rename targets in regenerated reports and display renames as `old -> new`
+- reject implausible cross-directory rename pairings caused by stale ETW file keys
 - group `.git` internals and runtime bookkeeping out of the main report tables
 - control large sessions with `--no-reads`, `--max-events <n>`, and `--no-sqlite`
 - keep noisy defaults out of AI sessions, including `node_modules`, `bin`, `obj`, `.git\objects`, `.git\logs`, AppLedger output folders, SQLite temp churn, PowerShell policy/startup probes, .NET telemetry/build/workload-advertising caches, Codex state, common cache folders, and app-specific cache/log folders

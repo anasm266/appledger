@@ -243,9 +243,9 @@ public sealed class NormalizationTests
     [Fact]
     public void SessionActivityAnalyzer_BuildsCodexLikeSummary()
     {
-        var tempFile = Live(FileEventKind.Modified, @"C:\Users\Anas\AppData\Local\Temp\work.tmp", observedAt: At(40), processId: 500, processName: "codex.exe");
-        var sensitiveRead = Live(FileEventKind.Read, @"C:\Users\Anas\.gitconfig", observedAt: At(41), processId: 501, processName: "git.exe");
-        var gitWrite = Live(FileEventKind.Modified, @"C:\Users\Anas\Documents\repo\.git\index", observedAt: At(42), processId: 501, processName: "git.exe");
+        var tempFile = Live(FileEventKind.Modified, Path.Combine(Path.GetTempPath(), "work.tmp"), observedAt: At(40), processId: 500, processName: "codex.exe");
+        var sensitiveRead = Live(FileEventKind.Read, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gitconfig"), observedAt: At(41), processId: 501, processName: "git.exe");
+        var gitWrite = Live(FileEventKind.Modified, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "repo", ".git", "index"), observedAt: At(42), processId: 501, processName: "git.exe");
         var files = FileEventMerger.NormalizeForSession([tempFile, sensitiveRead, gitWrite]);
 
         var ai = EmptyAi() with
@@ -357,7 +357,7 @@ public sealed class NormalizationTests
     [Fact]
     public void SessionActivityAnalyzer_BuildsClaudeLikeSummary()
     {
-        var cacheWrite = Live(FileEventKind.Modified, @"C:\Users\Anas\AppData\Roaming\Claude\IndexedDB\blob.data", observedAt: At(50), processId: 888, processName: "claude.exe");
+        var cacheWrite = Live(FileEventKind.Modified, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Claude", "IndexedDB", "blob.data"), observedAt: At(50), processId: 888, processName: "claude.exe");
         var files = FileEventMerger.NormalizeForSession([cacheWrite]);
 
         var network = new List<NetworkEvent>
@@ -586,7 +586,8 @@ public sealed class NormalizationTests
     [Fact]
     public void HtmlReport_RendersBigPictureAndActivityBuckets()
     {
-        var file = Live(FileEventKind.Modified, @"C:\Users\Anas\AppData\Local\Temp\session.tmp", observedAt: At(60), processId: 10, processName: "codex.exe");
+        var tempPath = Path.Combine(Path.GetTempPath(), "session.tmp");
+        var file = Live(FileEventKind.Modified, tempPath, observedAt: At(60), processId: 10, processName: "codex.exe");
         var files = FileEventMerger.NormalizeForSession([file]);
         var overview = SessionActivityAnalyzer.Build([], true, files, [], EmptyAi(), []);
 
@@ -603,7 +604,7 @@ public sealed class NormalizationTests
             NetworkEvents: [],
             RegistryEvents: [],
             Findings: [],
-            TopFolders: [new FolderImpact(@"C:\Users\Anas\AppData\Local\Temp", 1, 0, "temp")],
+            TopFolders: [new FolderImpact(Path.GetTempPath().TrimEnd('\\', '/'), 1, 0, "temp")],
             AiActivity: EmptyAi(),
             SnapshotErrors: [],
             ActivityOverview: overview);
